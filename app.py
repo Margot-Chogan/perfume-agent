@@ -45,36 +45,63 @@ def expand_query_notes(raw_notes_list):
                 expanded.add(normalize_note(extra))
     return expanded
 
-def weighted_score(query_notes, row):
+def weighted_score(query_notes, row, query_top=None, query_heart=None, query_base=None):
+
     top = set(normalize_note(n) for n in split_notes(row.get("Top Notes", "")))
     heart = set(normalize_note(n) for n in split_notes(row.get("Heart Notes", "")))
     base = set(normalize_note(n) for n in split_notes(row.get("Base Notes", "")))
 
-    # For external perfumes that may use All Notes, and for future-proofing
-    all_notes = set(normalize_note(n) for n in split_notes(row.get("All Notes", "")))
-
     score = 0.0
     matched = set()
 
-    for n in query_notes:
-        if n in top:
-            score += 1.0
-            matched.add(n)
-        elif n in heart:
-            score += 1.2
-            matched.add(n)
-        elif n in base:
-            score += 1.3
-            matched.add(n)
-        elif n in all_notes:
-            score += 1.1
-            matched.add(n)
+    # Pyramid-aware scoring
+    if query_top:
+        for n in query_top:
+            if n in top:
+                score += 2.0
+                matched.add(n)
+            elif n in heart:
+                score += 1.2
+                matched.add(n)
+            elif n in base:
+                score += 0.8
+                matched.add(n)
 
-    all_combined = top | heart | base | all_notes
-    if query_notes and query_notes.issubset(all_combined):
-        score += 2.0
+    if query_heart:
+        for n in query_heart:
+            if n in heart:
+                score += 1.6
+                matched.add(n)
+            elif n in top:
+                score += 1.2
+                matched.add(n)
+            elif n in base:
+                score += 1.0
+                matched.add(n)
 
-    return score, matched, all_combined
+    if query_base:
+        for n in query_base:
+            if n in base:
+                score += 1.4
+                matched.add(n)
+            elif n in heart:
+                score += 1.1
+                matched.add(n)
+
+    # fallback if pyramid not used
+    if not (query_top or query_heart or query_base):
+        for n in query_notes:
+            if n in top:
+                score += 1.6
+                matched.add(n)
+            elif n in heart:
+                score += 1.2
+                matched.add(n)
+            elif n in base:
+                score += 1.0
+                matched.add(n)
+
+    return score, matched, top | heart | base
 
 # ---------- External perfumes column standardization ----------
 EXPECTED_EXTERNAL_COLS = [
@@ -199,9 +226,15 @@ with right:
         if len(matches) > 0:
             used_external = matches.iloc[0].to_dict()
 
-            ext_notes = set()
-            for col in ["Top Notes", "Heart Notes", "Base Notes", "All Notes"]:
-                ext_notes |= set(normalize_note(n) for n in split_notes(used_external.get(col, "")))
+            query_top = set(normalize_note(n) for n in split_notes(used_external.get("Top Notes", "")))
+            query_heart = set(normalize_note(n) for n in split_notes(used_external.get("Heart Notes", "")))
+            query_base = set(normalize_note(n) for n in split_notes(used_external.get("Base Notes", "")))
+
+            ext_notes = query_top | query_heart | query_base
+
+            # fallback if pyramid not specified
+            if not ext_notes:
+                ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
 
             query_notes |= ext_notes
 
@@ -246,7 +279,7 @@ with right:
         non_zero = [r for r in results if r[0] > 0][:top_n]
 
         # Compute maximum possible score for display
-        max_score = len(query_notes) * 1.3 + 2
+        max_score = len(query_notes) * 1.6 + 2
         if not non_zero:
             st.warning(
                 "No close matches found. Try more specific notes (e.g., 'cedar', 'blackcurrant', 'vanilla') or remove one note."
