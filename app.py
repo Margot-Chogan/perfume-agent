@@ -280,6 +280,7 @@ with st.form("add_external"):
         new_perfume = st.text_input("Perfume")
         new_brand = st.text_input("Brand")
         new_family = st.text_input("Olfactory Family (optional)")
+        new_gender = st.text_input("Gender (optional)")
     with c2:
         new_top = st.text_input("Top Notes (comma-separated)")
         new_heart = st.text_input("Heart Notes (comma-separated)")
