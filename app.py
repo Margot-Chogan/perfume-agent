@@ -454,6 +454,22 @@ with right:
                 query_base,
                 query_notes_base=query_notes_base,
             )
+
+            # Fuzzy inspiration name boost
+            if mode == "By perfume name" and perfume_name.strip():
+                from difflib import SequenceMatcher
+
+                search = perfume_name.strip().lower()
+                insp_text = str(row.get("Inspiration", "")).lower()
+        
+                similarity = SequenceMatcher(None, search, insp_text).ratio()
+        
+                if similarity > 0.8:
+                    sc += 5.0
+                elif similarity > 0.6:
+                    sc += 3.0
+
+    results.append((sc, matched, row))
             results.append((sc, matched, row))
 
         results.sort(key=lambda x: x[0], reverse=True)
