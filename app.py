@@ -107,7 +107,10 @@ with left:
 
     st.subheader("Filters (optional)")
     family_filter = st.text_input("Olfactory family contains", placeholder="e.g., floral, oriental, woody")
-    gender_filter = st.text_input("Gender contains", placeholder="e.g., women, men, unisex")
+    gender_choice = st.selectbox(
+    "Gender preference",
+    ["Any", "Women (F)", "Men (M)", "Unisex (U)", "Women or Unisex (F/U)", "Men or Unisex (M/U)"]
+)
 
     top_n = st.slider("How many results?", 3, 15, 7)
 
@@ -140,8 +143,20 @@ with right:
     filtered = chogan.copy()
     if family_filter.strip():
         filtered = filtered[filtered["Olfactory Family"].fillna("").str.lower().str.contains(family_filter.strip().lower())]
-    if gender_filter.strip() and "Gender" in filtered.columns:
-        filtered = filtered[filtered["Gender"].fillna("").str.lower().str.contains(gender_filter.strip().lower())]
+    if "Gender" in filtered.columns:
+    g = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
+
+    if gender_choice == "Women (F)":
+        filtered = filtered[g == "F"]
+    elif gender_choice == "Men (M)":
+        filtered = filtered[g == "M"]
+    elif gender_choice == "Unisex (U)":
+        filtered = filtered[g == "U"]
+    elif gender_choice == "Women or Unisex (F/U)":
+        filtered = filtered[g.isin(["F", "U"])]
+    elif gender_choice == "Men or Unisex (M/U)":
+        filtered = filtered[g.isin(["M", "U"])]
+    # "Any" -> no filter]
 
     # Score and rank
     results = []
