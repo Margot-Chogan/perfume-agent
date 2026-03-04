@@ -134,7 +134,7 @@ with left:
     st.subheader("Filters (optional)")
     family_filter = st.text_input("Olfactory family contains", placeholder="e.g., floral, oriental, woody")
     gender_choice = st.selectbox(
-    "Gender preference",
+    "Gender p",
     ["Any", "Women (F)", "Men (M)", "Unisex (U)", "Women or Unisex (F/U)", "Men or Unisex (M/U)"]
 )
 
@@ -213,7 +213,7 @@ with right:
     # Otherwise, render the results
     else:
         for rank, (sc, matched, row) in enumerate(top_results, start=1):
-            ref = row.get("Perfume reference") or row.get("Reference") or row.get("Code") or row.get("ID") or ""
+            ref = row.get("Perfume ref.") or row.get("Reference") or row.get("Code") or row.get("ID") or ""
             insp = row.get("Inspiration", "")
             fam = row.get("Olfactory Family", "")
             top = row.get("Top Notes", "")
