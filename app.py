@@ -175,7 +175,7 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
 
     # fallback if pyramid not used
     if not (query_top or query_heart or query_base):
-        for n in query_notes:
+        for n in query_notes_match:
             if n in top:
                 score += 1.6
                 matched.add(n)
@@ -186,6 +186,13 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
                 score += 1.0
                 matched.add(n)
 
+    def compute_max_score(query_top, query_heart, query_base, query_notes_base):
+    # If pyramid notes exist, denominator should be based on those sets
+    if query_top or query_heart or query_base:
+        return (2.0 * len(query_top)) + (1.6 * len(query_heart)) + (1.4 * len(query_base))
+    # Otherwise notes-only mode
+    return 1.6 * len(query_notes_base)
+    
     # ---------------- Perfect match boost ----------------
     # query_notes_base = the original notes user asked for (NOT expanded synonyms)
     if query_notes_base:
@@ -329,10 +336,11 @@ with right:
             ext_notes = query_top | query_heart | query_base
 
             # fallback if pyramid not specified
-            if not ext_notes:
+           if not ext_notes:
                 ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
 
-            query_notes |= ext_notes
+            query_notes_match |= ext_notes
+            query_notes_base |= ext_notes
 
             st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
         else:
@@ -367,13 +375,13 @@ with right:
         results = []
         for _, row in filtered.iterrows():
             sc, matched, _ = weighted_score(
-    query_notes_match,
-    row,
-    query_top,
-    query_heart,
-    query_base,
-    query_notes_base=query_notes_base
-)
+                query_notes_match,
+                row,
+                query_top,
+                query_heart,
+                query_base,
+                query_notes_base=query_notes_base,
+            )
             results.append((sc, matched, row))
 
         results.sort(key=lambda x: x[0], reverse=True)
