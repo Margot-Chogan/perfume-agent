@@ -172,6 +172,7 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
     top = set(normalize_note(n) for n in split_notes(row.get("Top Notes", "")))
     heart = set(normalize_note(n) for n in split_notes(row.get("Heart Notes", "")))
     base = set(normalize_note(n) for n in split_notes(row.get("Base Notes", "")))
+    all_notes = top | heart | base
 
     score = 0.0
     matched = set()
