@@ -225,8 +225,6 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
             elif coverage >= 0.8:
                 score += 1.0
 
-    return score, matched
-
     # -------- Accord / pillar bonus --------
     all_notes = top | heart | base
     perfume_pillars = detect_pillars(all_notes)
@@ -247,6 +245,8 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
             score += 0.8
         if {"fruity", "gourmand"} <= overlap:  # fruity gourmand (LNT style)
             score += 0.6
+
+   return score, matched
 
 # ---------- Load data ----------
 @st.cache_data
