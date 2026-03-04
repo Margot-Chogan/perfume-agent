@@ -272,15 +272,15 @@ with left:
 with right:
     st.subheader("My Recommendations")
 
-        st.info(
-        """
-        **How to read the match score:**
+    st.info(
+    """
+    **How to read the match score:**
 
-        - **7.0–10.0** → Excellent match — You'll love this one!  
-        - **5.0–6.9** → Good match, give it a try  
-        - **3.0–4.9** → Quite different, but some similar notes
-        """
-        )
+    - **7.0–10.0** → Excellent match — You'll love this one!  
+    - **5.0–6.9** → Good match, give it a try  
+    - **3.0–4.9** → Quite different, but some similar notes
+    """
+    )
 
     # Build query notes from typed notes
     raw = split_notes(notes_text)
