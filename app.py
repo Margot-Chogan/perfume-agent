@@ -324,86 +324,96 @@ with right:
         - **3.0–4.9** → Quite different, but some similar notes
         """
     )
-if not search_clicked:
-    st.info("Click **Search** to run recommendations.")
-    st.stop()
 
     # This is where direct hits will appear (RIGHT side, under the score info)
     direct_matches_box = st.container()
 
-    # ---- Build query notes from typed notes ----
-    raw = split_notes(notes_text)
-    query_notes_base = set(normalize_note(n) for n in raw)   # denominator
-    query_notes_match = expand_query_notes(raw)              # matching
+    if not search_clicked:
+        st.info("Click **Search** to run recommendations.")
+    else:
+        # ✅ EVERYTHING that currently starts at your line 331 onward
+        # (direct hits, building query notes, filtering, scoring, rendering)
+        # must be indented under this else block.
 
-    query_top, query_heart, query_base = set(), set(), set()
-    used_pyramid_query = False
-    direct_hits = chogan.iloc[0:0]
+        # Example: (keep your existing code, just indent it)
+        # raw = split_notes(notes_text)
+        # query_notes_base = ...
+        # ...
+        pass  # remove this after you paste your code under the else
 
-    # ---- If searching by perfume name ----
-    if mode == "By perfume name" and perfume_name.strip():
-        # A) Direct hits in Chogan inspirations
-        direct_hits = find_chogan_direct_matches(chogan, perfume_name)
-
-        if brand_name.strip() and len(direct_hits) > 1:
-            direct_hits = direct_hits[
-                direct_hits["Inspiration"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
-            ]
-
-        # B) Pull notes from external DB (to fuel note-based recommendations)
-        mask = external["Perfume"].fillna("").str.lower().str.contains(perfume_name.strip().lower(), na=False)
-        matches = external[mask]
-
-        if brand_name.strip() and len(matches) > 1:
-            bmask = matches["Brand"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
-            matches = matches[bmask]
-
-        if len(matches) > 0:
-            used_external = matches.iloc[0].to_dict()
-        
-            query_top = set(normalize_note(n) for n in split_notes(used_external.get("Top Notes", "")))
-            query_heart = set(normalize_note(n) for n in split_notes(used_external.get("Heart Notes", "")))
-            query_base = set(normalize_note(n) for n in split_notes(used_external.get("Base Notes", "")))
-        
-            ext_notes = query_top | query_heart | query_base
-        
-            if ext_notes:
-                used_pyramid_query = True
+        # ---- Build query notes from typed notes ----
+        raw = split_notes(notes_text)
+        query_notes_base = set(normalize_note(n) for n in raw)   # denominator
+        query_notes_match = expand_query_notes(raw)              # matching
+    
+        query_top, query_heart, query_base = set(), set(), set()
+        used_pyramid_query = False
+        direct_hits = chogan.iloc[0:0]
+    
+        # ---- If searching by perfume name ----
+        if mode == "By perfume name" and perfume_name.strip():
+            # A) Direct hits in Chogan inspirations
+            direct_hits = find_chogan_direct_matches(chogan, perfume_name)
+    
+            if brand_name.strip() and len(direct_hits) > 1:
+                direct_hits = direct_hits[
+                    direct_hits["Inspiration"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
+                ]
+    
+            # B) Pull notes from external DB (to fuel note-based recommendations)
+            mask = external["Perfume"].fillna("").str.lower().str.contains(perfume_name.strip().lower(), na=False)
+            matches = external[mask]
+    
+            if brand_name.strip() and len(matches) > 1:
+                bmask = matches["Brand"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
+                matches = matches[bmask]
+    
+            if len(matches) > 0:
+                used_external = matches.iloc[0].to_dict()
+            
+                query_top = set(normalize_note(n) for n in split_notes(used_external.get("Top Notes", "")))
+                query_heart = set(normalize_note(n) for n in split_notes(used_external.get("Heart Notes", "")))
+                query_base = set(normalize_note(n) for n in split_notes(used_external.get("Base Notes", "")))
+            
+                ext_notes = query_top | query_heart | query_base
+            
+                if ext_notes:
+                    used_pyramid_query = True
+                else:
+                    # fallback if pyramid not provided
+                    ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
+                    used_pyramid_query = False
+            
+                query_notes_match |= ext_notes
+                query_notes_base |= ext_notes
+    
+                st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
             else:
-                # fallback if pyramid not provided
-                ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
-                used_pyramid_query = False
-        
-            query_notes_match |= ext_notes
-            query_notes_base |= ext_notes
-
-            st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
-        else:
-            if len(direct_hits) == 0:
-                st.warning("No saved notes found and no direct Chogan inspiration match. Try a different name or add it below.")
-
-    # ✅ Render direct hits ON THE RIGHT
-    with direct_matches_box:
-        if len(direct_hits) > 0:
-            st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
-
-            for rank, (_, hit) in enumerate(direct_hits.head(top_n).iterrows(), start=1):
-                ref = (
-                    hit.get("Perfume reference")
-                    or hit.get("Perfume ref.")
-                    or hit.get("Reference")
-                    or hit.get("Code")
-                    or hit.get("ID")
-                    or ""
-                )
-
-                st.markdown(f"### ✅ Direct match #{rank} — **{ref}**")
-                st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
-                st.write(f"Family: *{hit.get('Olfactory Family','')}*")
-                st.write(f"Top: {hit.get('Top Notes','')}")
-                st.write(f"Heart: {hit.get('Heart Notes','')}")
-                st.write(f"Base: {hit.get('Base Notes','')}")
-                st.divider()
+                if len(direct_hits) == 0:
+                    st.warning("No saved notes found and no direct Chogan inspiration match. Try a different name or add it below.")
+    
+        # ✅ Render direct hits ON THE RIGHT
+        with direct_matches_box:
+            if len(direct_hits) > 0:
+                st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
+    
+                for rank, (_, hit) in enumerate(direct_hits.head(top_n).iterrows(), start=1):
+                    ref = (
+                        hit.get("Perfume reference")
+                        or hit.get("Perfume ref.")
+                        or hit.get("Reference")
+                        or hit.get("Code")
+                        or hit.get("ID")
+                        or ""
+                    )
+    
+                    st.markdown(f"### ✅ Direct match #{rank} — **{ref}**")
+                    st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
+                    st.write(f"Family: *{hit.get('Olfactory Family','')}*")
+                    st.write(f"Top: {hit.get('Top Notes','')}")
+                    st.write(f"Heart: {hit.get('Heart Notes','')}")
+                    st.write(f"Base: {hit.get('Base Notes','')}")
+                    st.divider()
 
     # ---- Apply filters to Chogan catalog ----
     filtered = chogan.copy()
