@@ -284,7 +284,9 @@ with right:
 
     # Build query notes from typed notes
     raw = split_notes(notes_text)
-    query_notes = expand_query_notes(raw)
+
+    query_notes_base = set(normalize_note(n) for n in raw)          # for denominator
+    query_notes_match = expand_query_notes(raw)                     # for matching
     
     # Initialize pyramid query sets
     query_top = set()
@@ -348,12 +350,12 @@ with right:
     else:
         results = []
         for _, row in filtered.iterrows():
-            sc, matched, _ = weighted_score(query_notes, row, query_top, query_heart, query_base)
+            sc, matched, _ = weighted_score(query_notes_match, row, query_top, query_heart, query_base)
             results.append((sc, matched, row))
 
         results.sort(key=lambda x: x[0], reverse=True)
 
-        max_score = len(query_notes) * 1.6 + 2
+        max_score = compute_max_score(query_top, query_heart, query_base, query_notes_base)
 
         good_matches = [r for r in results if (r[0] / max_score) * 10 >= 3][:top_n]
 
