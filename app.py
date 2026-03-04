@@ -160,15 +160,17 @@ def expand_query_notes(raw_notes_list):
                 expanded.add(normalize_note(extra))
     return expanded
 
-def compute_max_score(query_top, query_heart, query_base, query_notes_base):
-    # pyramid mode
-    if query_top or query_heart or query_base:
+def compute_max_score(query_top, query_heart, query_base, query_notes_base, used_pyramid: bool) -> float:
+    """
+    used_pyramid=True  -> denominator based on the pyramid sets (Top/Heart/Base)
+    used_pyramid=False -> denominator based on the notes-only query (query_notes_base)
+    """
+    if used_pyramid:
         return (
             2.0 * len(query_top) +
             1.6 * len(query_heart) +
             1.4 * len(query_base)
         )
-    # notes-only mode
     return 1.6 * len(query_notes_base)
 
 def weighted_score(query_notes_match, row, query_top=None, query_heart=None, query_base=None, query_notes_base=None):
@@ -320,6 +322,7 @@ with right:
     query_notes_match = expand_query_notes(raw)              # matching
 
     query_top, query_heart, query_base = set(), set(), set()
+    used_pyramid_query = False
     direct_hits = chogan.iloc[0:0]
 
     # ---- If searching by perfume name ----
@@ -342,15 +345,20 @@ with right:
 
         if len(matches) > 0:
             used_external = matches.iloc[0].to_dict()
-
+        
             query_top = set(normalize_note(n) for n in split_notes(used_external.get("Top Notes", "")))
             query_heart = set(normalize_note(n) for n in split_notes(used_external.get("Heart Notes", "")))
             query_base = set(normalize_note(n) for n in split_notes(used_external.get("Base Notes", "")))
-
+        
             ext_notes = query_top | query_heart | query_base
-            if not ext_notes:
+        
+            if ext_notes:
+                used_pyramid_query = True
+            else:
+                # fallback if pyramid not provided
                 ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
-
+                used_pyramid_query = False
+        
             query_notes_match |= ext_notes
             query_notes_base |= ext_notes
 
@@ -412,7 +420,7 @@ with right:
     if not query_notes_base:
         st.write("Enter notes (or select a saved perfume) to get recommendations.")
     else:
-        max_score = compute_max_score(query_top, query_heart, query_base, query_notes_base)
+        max_score = compute_max_score(query_top, query_heart, query_base, query_notes_base, used_pyramid_query)
         if max_score <= 0:
             st.write("Enter notes (or select a saved perfume) to get recommendations.")
         else:
