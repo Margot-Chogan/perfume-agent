@@ -35,7 +35,8 @@ def notes_set(row):
     return set([n for n in alln if n])
 
 def weighted_score(query_notes, row):
-    # weights: top 1.0, heart 1.2, base 1.3
+
+    # collect notes from each layer
     top = set(normalize_note(n) for n in split_notes(row.get("Top Notes", "")))
     heart = set(normalize_note(n) for n in split_notes(row.get("Heart Notes", "")))
     base = set(normalize_note(n) for n in split_notes(row.get("Base Notes", "")))
@@ -45,25 +46,30 @@ def weighted_score(query_notes, row):
     matched = set()
 
     for n in query_notes:
+
         if n in top:
-        score += 1.0
-        matched.add(n)
+            score += 1.0
+            matched.add(n)
+
         elif n in heart:
-        score += 1.2
-        matched.add(n)
+            score += 1.2
+            matched.add(n)
+
         elif n in base:
-        score += 1.3
-        matched.add(n)
+            score += 1.3
+            matched.add(n)
+
         elif n in all_notes:
-        score += 1.1
-        matched.add(n)    
+            score += 1.1
+            matched.add(n)
 
-    # bonus if all requested notes are present somewhere
+    # bonus if all notes appear somewhere
     all_combined = top | heart | base | all_notes
-    if query_notes and query_notes.issubset(all_combined):
-    score += 2.0
 
-    return score, matched, all_notes
+    if query_notes and query_notes.issubset(all_combined):
+        score += 2.0
+
+    return score, matched, all_combined
 
 # ---------- Load data ----------
 @st.cache_data
