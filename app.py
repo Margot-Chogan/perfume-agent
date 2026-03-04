@@ -130,7 +130,7 @@ def expand_query_notes(raw_notes_list):
                 expanded.add(normalize_note(extra))
     return expanded
 
-def weighted_score(query_notes, row, query_top=None, query_heart=None, query_base=None):
+def weighted_score(query_notes_match, row, query_top=None, query_heart=None, query_base=None, query_notes_base=None):
 
     top = set(normalize_note(n) for n in split_notes(row.get("Top Notes", "")))
     heart = set(normalize_note(n) for n in split_notes(row.get("Heart Notes", "")))
@@ -185,6 +185,22 @@ def weighted_score(query_notes, row, query_top=None, query_heart=None, query_bas
             elif n in base:
                 score += 1.0
                 matched.add(n)
+
+    # ---------------- Perfect match boost ----------------
+    # query_notes_base = the original notes user asked for (NOT expanded synonyms)
+    if query_notes_base:
+        all_notes_in_perfume = top | heart | base
+        base_hit_count = len(set(query_notes_base) & all_notes_in_perfume)
+        base_total = len(set(query_notes_base))
+
+        if base_total > 0:
+            coverage = base_hit_count / base_total
+
+            # bonus tiers (tweakable)
+            if coverage == 1.0:
+                score += 2.0   # perfect
+            elif coverage >= 0.8:
+                score += 1.0   # almost perfect
 
     return score, matched, top | heart | base
 
@@ -350,7 +366,14 @@ with right:
     else:
         results = []
         for _, row in filtered.iterrows():
-            sc, matched, _ = weighted_score(query_notes_match, row, query_top, query_heart, query_base)
+            sc, matched, _ = weighted_score(
+    query_notes_match,
+    row,
+    query_top,
+    query_heart,
+    query_base,
+    query_notes_base=query_notes_base
+)
             results.append((sc, matched, row))
 
         results.sort(key=lambda x: x[0], reverse=True)
@@ -367,7 +390,8 @@ with right:
         else:
             for rank, (sc, matched, row) in enumerate(good_matches, start=1):
         
-                score_10 = (sc / max_score) * 10
+                score_10 = (sc / max_score) * 10 if max_score > 0 else 0
+                score_10 = min(score_10, 10.0)
         
                 ref = (
                     row.get("Perfume reference")
