@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Perfume Recommendation Agent", layout="wide")
+st.set_page_config(page_title="Find your Chogan Perfume", layout="wide")
 
 # ---------- Helpers ----------
 def split_notes(x):
