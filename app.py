@@ -154,6 +154,40 @@ def load_external_from_sheets():
 def upsert_external_to_sheets(ws, row_dict):
     """
     Update row if Perfume+Brand matches (case-insensitive), else append.
+    Assumes headers are:
+    Perfume | Brand | Gender | Top Notes | Heart Notes | Base Notes | All Notes | Olfactory Family
+    """
+    # Ensure headers are correct
+    headers = ws.row_values(1)
+    if headers != EXPECTED_EXTERNAL_COLS:
+        ws.clear()
+        ws.append_row(EXPECTED_EXTERNAL_COLS)
+
+    records = ws.get_all_records()
+
+    key_perfume = row_dict.get("Perfume", "").strip().lower()
+    key_brand = row_dict.get("Brand", "").strip().lower()
+
+    # Find matching row (Google Sheets rows start at 1; data starts at row 2)
+    target_row = None
+    for i, r in enumerate(records, start=2):
+        p = str(r.get("Perfume", "")).strip().lower()
+        b = str(r.get("Brand", "")).strip().lower()
+        if p == key_perfume and b == key_brand:
+            target_row = i
+            break
+
+    # Build ordered values matching the sheet columns
+    values = [row_dict.get(c, "") for c in EXPECTED_EXTERNAL_COLS]
+
+    if target_row:
+        ws.update(f"A{target_row}:H{target_row}", [values])
+    else:
+        ws.append_row(values)
+
+def upsert_external_to_sheets(ws, row_dict):
+    """
+    Update row if Perfume+Brand matches (case-insensitive), else append.
     """
     ensure_external_headers(ws)
     records = ws.get_all_records()
@@ -424,11 +458,11 @@ if submitted:
     if not new_perfume.strip():
         st.error("Perfume name is required.")
     else:
-        # Save to Google Sheets
+        # Build the row we want to save
         new_row = {
             "Perfume": new_perfume.strip(),
             "Brand": new_brand.strip(),
-            "Gender": new_gender.strip(),
+            "Gender": new_gender.strip(),  # F / M / U / ""
             "Top Notes": new_top.strip(),
             "Heart Notes": new_heart.strip(),
             "Base Notes": new_base.strip(),
@@ -436,19 +470,11 @@ if submitted:
             "Olfactory Family": new_family.strip(),
         }
 
-        external_ws.append_row([
-            new_row["Perfume"],
-            new_row["Brand"],
-            new_row["Gender"],
-            new_row["Top Notes"],
-            new_row["Heart Notes"],
-            new_row["Base Notes"],
-            new_row["All Notes"],
-            new_row["Olfactory Family"],
-        ])
+        # Upsert into Google Sheets (update if exists, else append)
+        upsert_external_to_sheets(external_ws, new_row)
 
-        st.success("Saved to Google Sheets.")
+        st.success("Saved (updated if already existed).")
         st.rerun()
-
+        
 with st.expander("View saved external perfumes"):
     st.dataframe(external.tail(50))
