@@ -246,7 +246,7 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
         if {"fruity", "gourmand"} <= overlap:  # fruity gourmand (LNT style)
             score += 0.6
 
-   return score, matched
+    return score, matched
 
 # ---------- Load data ----------
 @st.cache_data
