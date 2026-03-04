@@ -191,16 +191,16 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
 
     def compute_max_score(query_top, query_heart, query_base, query_notes_base):
 
-    # pyramid search
-    if query_top or query_heart or query_base:
-        return (
-            2.0 * len(query_top)
-            + 1.6 * len(query_heart)
-            + 1.4 * len(query_base)
-        )
+        # pyramid search
+        if query_top or query_heart or query_base:
+            return (
+                2.0 * len(query_top)
+                + 1.6 * len(query_heart)
+                + 1.4 * len(query_base)
+            )
 
-    # notes-only search
-    return 1.6 * len(query_notes_base)
+        # notes-only search
+        return 1.6 * len(query_notes_base)
     
     # ---------------- Perfect match boost ----------------
     # query_notes_base = the original notes user asked for (NOT expanded synonyms)
