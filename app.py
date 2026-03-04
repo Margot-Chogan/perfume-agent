@@ -212,6 +212,11 @@ with right:
     # Build query notes from typed notes
     raw = split_notes(notes_text)
     query_notes = expand_query_notes(raw)
+    
+    # Initialize pyramid query sets
+    query_top = set()
+    query_heart = set()
+    query_base = set()
 
     # If searching by non-Chogan perfume name, pull notes from external DB
     if mode == "By non-Chogan perfume name" and perfume_name.strip():
@@ -270,7 +275,7 @@ with right:
     else:
         results = []
         for _, row in filtered.iterrows():
-            sc, matched, _ = weighted_score(query_notes, row)
+            sc, matched, _ = weighted_score(query_notes, row, query_top, query_heart, query_base)
             results.append((sc, matched, row))
 
         results.sort(key=lambda x: x[0], reverse=True)
