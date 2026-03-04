@@ -5,17 +5,81 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 
+import streamlit as st
+import pandas as pd
+import re
+import json
+import gspread
+from google.oauth2.service_account import Credentials
+
+# ---------- External perfumes columns ----------
+EXPECTED_EXTERNAL_COLS = [
+    "Perfume",
+    "Brand",
+    "Gender",
+    "Top Notes",
+    "Heart Notes",
+    "Base Notes",
+    "All Notes",
+    "Olfactory Family",
+]
+
 @st.cache_resource
 def get_gs_client():
-    raw = st.secrets["gcp_service_account"]["raw_json"]
     creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
-    
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
 
-gc = get_gs_client()
-st.write("Google client created")
+def get_external_worksheet():
+    gc = get_gs_client()
+    sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
+    ws_name = st.secrets["external_sheet"]["worksheet_name"]
+    return gc.open_by_key(sheet_id).worksheet(ws_name)
+
+def ensure_external_headers(ws):
+    headers = ws.row_values(1)
+    if headers != EXPECTED_EXTERNAL_COLS:
+        ws.clear()
+        ws.append_row(EXPECTED_EXTERNAL_COLS)
+
+def load_external_from_sheets():
+    ws = get_external_worksheet()
+    ensure_external_headers(ws)
+
+    records = ws.get_all_records()
+    df = pd.DataFrame(records)
+
+    for col in EXPECTED_EXTERNAL_COLS:
+        if col not in df.columns:
+            df[col] = ""
+
+    return df[EXPECTED_EXTERNAL_COLS], ws
+
+def upsert_external_to_sheets(ws, row_dict):
+    # always re-open worksheet fresh to avoid stale handles
+    ws = get_external_worksheet()
+    ensure_external_headers(ws)
+
+    records = ws.get_all_records()
+
+    key_perfume = row_dict.get("Perfume", "").strip().lower()
+    key_brand = row_dict.get("Brand", "").strip().lower()
+
+    target_row = None
+    for i, r in enumerate(records, start=2):  # data starts at row 2
+        p = str(r.get("Perfume", "")).strip().lower()
+        b = str(r.get("Brand", "")).strip().lower()
+        if p == key_perfume and b == key_brand:
+            target_row = i
+            break
+
+    values = [row_dict.get(c, "") for c in EXPECTED_EXTERNAL_COLS]
+
+    if target_row:
+        ws.update(f"A{target_row}:H{target_row}", [values])
+    else:
+        ws.append_row(values)
 
 # ---------- Helpers ---------- 
 def split_notes(x):
@@ -118,88 +182,9 @@ def weighted_score(query_notes, row, query_top=None, query_heart=None, query_bas
 
 @st.cache_resource
 def get_gs_client():
-    creds_info = st.secrets["gcp_service_account"]
+    creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
 
-    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-    return gspread.authorize(creds)
-
-import json
-st.write("Service account:", json.loads(st.secrets["gcp_service_account"]["raw_json"]).get("client_email"))
-
-def load_external_from_sheets():
-    gc = get_gs_client()
-
-    sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
-    ws_name = st.secrets["external_sheet"]["worksheet_name"]
-
-    ws = gc.open_by_key(sheet_id).worksheet(ws_name)
-
-    records = ws.get_all_records()
-    df = pd.DataFrame(records)
-
-    for col in EXPECTED_EXTERNAL_COLS:
-        if col not in df.columns:
-            df[col] = ""
-
-    return df[EXPECTED_EXTERNAL_COLS], ws
-
-# ---------- External perfumes column standardization ----------
-EXPECTED_EXTERNAL_COLS = [
-    "Perfume",
-    "Brand",
-    "Gender"
-    "Top Notes",
-    "Heart Notes",
-    "Base Notes",
-    "All Notes",
-    "Olfactory Family",
-]
-
-def upsert_external_to_sheets(ws, row_dict):
-    """
-    Update row if Perfume+Brand matches (case-insensitive), else append.
-    Accepts either a gspread Worksheet or (accidentally) a Spreadsheet;
-    will recover by opening the worksheet from secrets.
-    """
-
-    # If ws is not a Worksheet (no row_values), recover by opening worksheet properly
-    if ws is None or not hasattr(ws, "row_values"):
-        gc = get_gs_client()
-        sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
-        ws_name = st.secrets["external_sheet"]["worksheet_name"]
-        ws = gc.open_by_key(sheet_id).worksheet(ws_name)
-
-    # Ensure headers match expected
-    headers = ws.row_values(1)
-    if headers != EXPECTED_EXTERNAL_COLS:
-        ws.clear()
-        ws.append_row(EXPECTED_EXTERNAL_COLS)
-
-    records = ws.get_all_records()
-
-    key_perfume = row_dict.get("Perfume", "").strip().lower()
-    key_brand = row_dict.get("Brand", "").strip().lower()
-
-    target_row = None
-    for i, r in enumerate(records, start=2):
-        p = str(r.get("Perfume", "")).strip().lower()
-        b = str(r.get("Brand", "")).strip().lower()
-        if p == key_perfume and b == key_brand:
-            target_row = i
-            break
-
-    values = [row_dict.get(c, "") for c in EXPECTED_EXTERNAL_COLS]
-
-    if target_row:
-        ws.update(f"A{target_row}:H{target_row}", [values])
-    else:
-        ws.append_row(values)
-
-@st.cache_resource
-def get_gs_client():
-    creds_info = st.secrets["gcp_service_account"]
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
 
