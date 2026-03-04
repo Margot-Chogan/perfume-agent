@@ -353,16 +353,17 @@ with right:
         results.sort(key=lambda x: x[0], reverse=True)
 
         # Keep searching down the list until we collect up to top_n non-zero results
-        non_zero = [r for r in results if r[0] > 0][:top_n]
+        good_matches = [r for r in results if r[0] >= 3][:top_n]
 
         # Compute maximum possible score for display
         max_score = len(query_notes) * 1.6 + 2
-        if not non_zero:
+        if not good_matches:
             st.warning(
-                "No close matches found. Try more specific notes (e.g., 'cedar', 'blackcurrant', 'vanilla') or remove one note."
+                "Sorry, we don't have a good match for the notes in the perfume you are looking for. "
+                "Would you like to try something else?"
             )
         else:
-            for rank, (sc, matched, row) in enumerate(non_zero, start=1):
+            for rank, (sc, matched, row) in enumerate(good_matches, start=1):
                 ref = (
                     row.get("Perfume reference")
                     or row.get("Perfume ref.")
