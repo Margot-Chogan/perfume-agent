@@ -75,7 +75,7 @@ except Exception as e:
 try:
     external = load_csv("external_perfumes.csv")
 except Exception:
-    external = pd.DataFrame(columns=["Perfume", "Brand", "Top Notes", "Heart Notes", "Base Notes", "Olfactory Family"])
+    external = pd.DataFrame(columns=["Perfume", "Brand", "Top Notes", "Heart Notes", "Base Notes", "All Notes", "Olfactory Family"])
 
 # ---------- UI ----------
 st.title("Perfume Recommendation Agent (Chogan)")
@@ -118,7 +118,7 @@ with right:
         if len(matches) > 0:
             used_external = matches.iloc[0].to_dict()
             ext_notes = set()
-            for col in ["Top Notes", "Heart Notes", "Base Notes"]:
+            for col in ["Top Notes", "Heart Notes", "Base Notes", "All Notes"]:
                 ext_notes |= set(normalize_note(n) for n in split_notes(used_external.get(col, "")))
             # Merge with typed notes (if any)
             query_notes |= ext_notes
