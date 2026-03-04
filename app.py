@@ -195,7 +195,12 @@ with right:
         results.append((sc, matched, row))
 
     results.sort(key=lambda x: x[0], reverse=True)
-    top_results = results[:top_n]
+    top_results = [r for r in top_results if r[0] > 0]
+
+if not top_results:
+    st.warning("No close matches found. Try more specific notes (e.g., 'cedar', 'blackcurrant', 'vanilla') or remove one note.")
+else:
+    # render results loop
 
     if not query_notes:
         st.write("Enter notes (or select a saved external perfume) to get recommendations.")
