@@ -20,15 +20,19 @@ EXPECTED_EXTERNAL_COLS = [
 @st.cache_resource
 def get_gs_client():
     creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive.readonly",
+    ]
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
 
 def quick_auth_test():
     try:
         gc = get_gs_client()
-        gc.list_spreadsheet_files()  # simple call to test auth
-        st.success("Google auth looks OK.")
+        sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
+        gc.open_by_key(sheet_id)
+        st.success("Google auth looks OK and spreadsheet is accessible.")
     except Exception:
         st.error("Google auth failed (details below):")
         import traceback
@@ -214,8 +218,6 @@ def standardize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = ""
 
     return df[EXPECTED_EXTERNAL_COLS]
-
-quick_auth_test()
 
 # ---------- Load data ----------
 @st.cache_data
