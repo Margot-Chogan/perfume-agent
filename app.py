@@ -364,8 +364,8 @@ with right:
             )
         else:
             for rank, (sc, matched, row) in enumerate(good_matches, start=1):
-            score_10 = (sc / max_score) * 10
-            # render as normal
+                score_10 = (sc / max_score) * 10
+                # render as normal
             
              ref = (
             row.get("Perfume reference")
