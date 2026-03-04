@@ -108,10 +108,47 @@ except Exception as e:
     st.error("Could not load chogan_catalog.csv. Make sure it is in the repo.")
     st.stop()
 
+EXPECTED_EXTERNAL_COLS = ["Perfume", "Brand", "Top Notes", "Heart Notes", "Base Notes", "All Notes", "Olfactory Family"]
+
+def standardize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
+    # Strip whitespace from headers
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # Map common variations -> expected names
+    rename_map = {}
+    for c in df.columns:
+        lc = str(c).strip().lower()
+
+        if lc in ["perfume", "perfume name", "name", "fragrance", "parfum"]:
+            rename_map[c] = "Perfume"
+        elif lc in ["brand", "house", "designer", "maker"]:
+            rename_map[c] = "Brand"
+        elif lc in ["top", "top notes", "head notes"]:
+            rename_map[c] = "Top Notes"
+        elif lc in ["heart", "middle", "middle notes", "mid notes"]:
+            rename_map[c] = "Heart Notes"
+        elif lc in ["base", "base notes"]:
+            rename_map[c] = "Base Notes"
+        elif lc in ["all notes", "notes", "notes (all)", "all"]:
+            rename_map[c] = "All Notes"
+        elif lc in ["olfactory family", "family", "accords"]:
+            rename_map[c] = "Olfactory Family"
+
+    df = df.rename(columns=rename_map)
+
+    # Ensure all expected columns exist
+    for col in EXPECTED_EXTERNAL_COLS:
+        if col not in df.columns:
+            df[col] = ""
+
+    # Keep only expected columns (in a consistent order)
+    return df[EXPECTED_EXTERNAL_COLS]
+
 try:
     external = load_csv("external_perfumes.csv")
+    external = standardize_external_columns(external)
 except Exception:
-    external = pd.DataFrame(columns=["Perfume", "Brand", "Top Notes", "Heart Notes", "Base Notes", "All Notes", "Olfactory Family"])
+    external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
 
 # ---------- UI ----------
 st.title("Find your Chogan Perfume")
