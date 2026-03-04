@@ -178,7 +178,7 @@ if "Gender" in filtered.columns:
         st.write("Enter notes (or select a saved external perfume) to get recommendations.")
     else:
         for rank, (sc, matched, row) in enumerate(top_results, start=1):
-            ref = row.get("Perfume reference", "")
+            ref = row.get("Perfume ref.", "")
             insp = row.get("Inspiration", "")
             fam = row.get("Olfactory Family", "")
             top = row.get("Top Notes", "")
