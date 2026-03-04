@@ -24,6 +24,17 @@ def get_gs_client():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
 
+def quick_auth_test():
+    try:
+        gc = get_gs_client()
+        gc.list_spreadsheet_files()  # simple call to test auth
+        st.success("Google auth looks OK.")
+    except Exception:
+        st.error("Google auth failed (details below):")
+        import traceback
+        st.code(traceback.format_exc())
+        st.stop()
+
 def get_external_worksheet():
     gc = get_gs_client()
     sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
@@ -203,6 +214,8 @@ def standardize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = ""
 
     return df[EXPECTED_EXTERNAL_COLS]
+
+quick_auth_test()
 
 # ---------- Load data ----------
 @st.cache_data
