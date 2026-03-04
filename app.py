@@ -176,6 +176,7 @@ with st.form("add_external"):
         new_top = st.text_input("Top Notes (comma-separated)")
         new_heart = st.text_input("Heart Notes (comma-separated)")
         new_base = st.text_input("Base Notes (comma-separated)")
+        new_all = st.text_input("All Notes (comma-separated) — use if no pyramid")
 
     submitted = st.form_submit_button("Save external perfume")
 
@@ -196,6 +197,7 @@ if submitted:
             "Top Notes": new_top.strip(),
             "Heart Notes": new_heart.strip(),
             "Base Notes": new_base.strip(),
+            "All Notes": new_all.strip(),
             "Olfactory Family": new_family.strip(),
         }
 
