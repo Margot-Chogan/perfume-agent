@@ -1,8 +1,16 @@
 import streamlit as st
 import pandas as pd
 import re
+import json
 import gspread
 from google.oauth2.service_account import Credentials
+
+@st.cache_resource
+def get_gs_client():
+    creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+    return gspread.authorize(creds)
 
 st.set_page_config(page_title="Find your Chogan Perfume", layout="wide")
 
@@ -112,8 +120,9 @@ def get_gs_client():
 
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
-    
-st.write("Service account:", st.secrets["gcp_service_account"]["client_email"])
+
+import json
+st.write("Service account:", json.loads(st.secrets["gcp_service_account"]["raw_json"]).get("client_email"))
 
 def load_external_from_sheets():
     gc = get_gs_client()
