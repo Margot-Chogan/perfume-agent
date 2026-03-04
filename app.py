@@ -105,6 +105,32 @@ def weighted_score(query_notes, row, query_top=None, query_heart=None, query_bas
 
     return score, matched, top | heart | base
 
+@st.cache_resource
+def get_gs_client():
+    creds_info = st.secrets["gcp_service_account"]
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+    return gspread.authorize(creds)
+
+
+def load_external_from_sheets():
+    gc = get_gs_client()
+
+    sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
+    ws_name = st.secrets["external_sheet"]["worksheet_name"]
+
+    ws = gc.open_by_key(sheet_id).worksheet(ws_name)
+
+    records = ws.get_all_records()
+    df = pd.DataFrame(records)
+
+    for col in EXPECTED_EXTERNAL_COLS:
+        if col not in df.columns:
+            df[col] = ""
+
+    return df[EXPECTED_EXTERNAL_COLS], ws
+
 # ---------- External perfumes column standardization ----------
 EXPECTED_EXTERNAL_COLS = [
     "Perfume",
@@ -227,37 +253,12 @@ except Exception:
     st.stop()
 
 try:
-    external = load_external_csv("external_perfumes.csv")
-    external = standardize_external_columns(external)
-except Exception:
+    external, external_ws = load_external_from_sheets()
+except Exception as e:
+    st.error(f"Could not load external perfumes from Google Sheets: {e}")
     external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
-
-@st.cache_resource
-def get_gs_client():
-    creds_info = st.secrets["gcp_service_account"]
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-
-    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-    return gspread.authorize(creds)
-
-
-def load_external_from_sheets():
-    gc = get_gs_client()
-
-    sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
-    ws_name = st.secrets["external_sheet"]["worksheet_name"]
-
-    ws = gc.open_by_key(sheet_id).worksheet(ws_name)
-
-    records = ws.get_all_records()
-    df = pd.DataFrame(records)
-
-    for col in EXPECTED_EXTERNAL_COLS:
-        if col not in df.columns:
-            df[col] = ""
-
-    return df[EXPECTED_EXTERNAL_COLS], ws
-
+    external_ws = None
+    
 # ---------- UI ----------
 st.title("Find your Chogan Perfume")
 
