@@ -6,6 +6,10 @@ from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="Find your Chogan Perfume", layout="wide")
 
+st.write("Service account:", st.secrets["gcp_service_account"].get("client_email", "missing"))
+st.write("Sheet ID:", st.secrets["external_sheet"].get("spreadsheet_id", "missing"))
+st.write("Worksheet:", st.secrets["external_sheet"].get("worksheet_name", "missing"))
+
 # ---------- Helpers ---------- 
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
