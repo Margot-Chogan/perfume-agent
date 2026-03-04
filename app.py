@@ -270,16 +270,14 @@ with left:
     top_n = st.slider("How many recommendations?", 1, 5, 3)
 
 with right:
-    st.subheader("Recommendations")
+    st.subheader("My Recommendations")
 
     with st.expander("How to read the match score (out of 10)"):
         st.markdown(
         """
-    - **9.0–10.0** → Excellent match  
-    - **7.0–8.9** → Very good match  
-    - **5.0–6.9** → Good match  
-    - **3.0–4.9** → Possible match  
-    - **0.0–2.9** → Weak match
+    - **7.0–10.0** → Excellent match - You'll love this one!  
+    - **5.0–6.9** → Good match, give it a try  
+    - **3.0–4.9** → Quite different, but some similar notes
         """
         )
 
