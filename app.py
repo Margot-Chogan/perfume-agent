@@ -356,7 +356,7 @@ with right:
             ext_notes = query_top | query_heart | query_base
 
             # fallback if pyramid not specified
-           if not ext_notes:
+        if not ext_notes:
                 ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
 
             query_notes_match |= ext_notes
