@@ -110,6 +110,37 @@ EXPAND_KEYWORDS = {
     "musk": ["musk", "ambergris"],
 }
 
+# -------- Accord / pillar detection (simple + tweakable) --------
+PILLARS = {
+    "fruity": {
+        "pear","raspberry","strawberry","lychee","blackcurrant","currant","peach","plum","apple",
+        "pineapple","mango","passionfruit","berry","berries","orange","mandarin","tangerine","bergamot","lemon","citrus"
+    },
+    "floral": {
+        "rose","black rose","jasmine","jasmine sambac","orange blossom","neroli","peony","datura",
+        "tuberose","ylang-ylang","iris","violet","orchid","vanilla orchid","lily"
+    },
+    "gourmand": {
+        "vanilla","praline","caramel","toffee","chocolate","cocoa","coffee","honey","sugar","candy",
+        "marshmallow","tonka","tonka bean","benzoin","almond"
+    },
+    "woody": {
+        "cedar","cedarwood","sandalwood","vetiver","patchouli","moss","oakmoss","wood","woods","woody","papyrus"
+    },
+    "musky": {"musk","white musk","ambroxan","ambergris","ambrox"},
+    "resinous": {"incense","labdanum","amber","resin","myrrh","opoponax"},
+    "spicy": {"pepper","pink pepper","cinnamon","cardamom","clove","saffron"},
+    "sweet": {"vanilla","praline","caramel","honey","sugar","tonka","benzoin"},
+}
+
+# notes -> which pillars are present
+def detect_pillars(notes_set: set[str]) -> set[str]:
+    found = set()
+    for pillar, kws in PILLARS.items():
+        if notes_set & kws:
+            found.add(pillar)
+    return found
+
 def normalize_note(n: str) -> str:
     n = str(n).strip().lower()
     return SYNONYMS.get(n, n)
@@ -194,6 +225,27 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
                 score += 1.0
 
     return score, matched
+
+    # -------- Accord / pillar bonus --------
+    all_notes = top | heart | base
+    perfume_pillars = detect_pillars(all_notes)
+
+    if query_notes_base:
+        query_pillars = detect_pillars(set(query_notes_base))
+        overlap = perfume_pillars & query_pillars
+
+        # Strong pillars that usually define "same vibe"
+        if "patchouli" in (top | heart | base) and "patchouli" in set(query_notes_base):
+            score += 0.6  # small extra anchor bonus
+
+        # Generic pillar overlap bonus (tweakable)
+        score += 0.6 * len(overlap)
+
+        # Extra synergy bonus for common "designer DNA" combos
+        if {"fruity", "woody"} <= overlap:     # fruity + patchouli/woody
+            score += 0.8
+        if {"fruity", "gourmand"} <= overlap:  # fruity gourmand (LNT style)
+            score += 0.6
 
 # ---------- Load data ----------
 @st.cache_data
