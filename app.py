@@ -348,21 +348,22 @@ with right:
 
         if len(matches) > 0:
             used_external = matches.iloc[0].to_dict()
-
+        
             query_top = set(normalize_note(n) for n in split_notes(used_external.get("Top Notes", "")))
             query_heart = set(normalize_note(n) for n in split_notes(used_external.get("Heart Notes", "")))
             query_base = set(normalize_note(n) for n in split_notes(used_external.get("Base Notes", "")))
-
+        
             ext_notes = query_top | query_heart | query_base
-
+        
             # fallback if pyramid not specified
-        if not ext_notes:
+            if not ext_notes:
                 ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
-
+        
             query_notes_match |= ext_notes
             query_notes_base |= ext_notes
-
+        
             st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
+        
         else:
             st.warning("No saved notes found for that perfume. Add it below (manual entry) to reuse next time.")
 
