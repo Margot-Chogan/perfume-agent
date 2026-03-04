@@ -175,7 +175,7 @@ with right:
     else:
         for rank, (sc, matched, row) in enumerate(top_results, start=1):
             # Try multiple possible column names for the reference
-            ref = row.get("Perfume reference") or row.get("Reference") or row.get("Code") or row.get("ID") or ""
+            ref = row.get("Perfume ref.") or row.get("Reference") or row.get("Code") or row.get("ID") or ""
             insp = row.get("Inspiration", "")
             fam = row.get("Olfactory Family", "")
             top = row.get("Top Notes", "")
