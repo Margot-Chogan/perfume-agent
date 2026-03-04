@@ -23,9 +23,35 @@ SYNONYMS = {
     "neroli": "neroli",
 }
 
+EXPAND_KEYWORDS = {
+    # Broad categories -> likely notes in databases
+    "wood": ["woody", "woods", "cedar", "sandalwood", "vetiver", "patchouli", "guaiac wood", "cashmeran", "oakmoss"],
+    "woody": ["woody", "woods", "cedar", "sandalwood", "vetiver", "patchouli", "cashmeran", "oakmoss"],
+    "berry": ["berries", "red berries", "wild berries", "blackcurrant", "currant", "raspberry", "strawberry"],
+    "citrus": ["bergamot", "lemon", "lime", "orange", "grapefruit", "mandarin"],
+    "floral": ["rose", "jasmine", "orange blossom", "ylang-ylang", "tuberose", "iris", "violet", "peony", "lavender"],
+    "vanilla": ["vanilla", "tonka bean", "benzoin"],
+    "amber": ["amber", "ambergris", "labdanum", "benzoin"],
+    "musk": ["musk", "white musk", "ambergris"],
+}
+
 def normalize_note(n):
     n = n.strip().lower()
     return SYNONYMS.get(n, n)
+
+def expand_query_notes(raw_notes_list):
+    expanded = set()
+
+    for n in raw_notes_list:
+        n = normalize_note(n)
+        expanded.add(n)
+
+        # if it's a broad keyword, expand it
+        if n in EXPAND_KEYWORDS:
+            for extra in EXPAND_KEYWORDS[n]:
+                expanded.add(normalize_note(extra))
+
+    return expanded
 
 def notes_set(row):
     top = split_notes(row.get("Top Notes", ""))
@@ -118,7 +144,8 @@ with right:
     st.subheader("Recommendations")
 
     # Build query notes
-    query_notes = set(normalize_note(n) for n in split_notes(notes_text))
+    raw = split_notes(notes_text)
+    query_notes = expand_query_notes(raw)
 
     # If perfume name mode, try to find saved external perfume and use its notes
     used_external = None
