@@ -272,12 +272,13 @@ with left:
 with right:
     st.subheader("My Recommendations")
 
-    with st.expander("How to read the match score (out of 10)"):
-        st.markdown(
+        st.info(
         """
-    - **7.0–10.0** → Excellent match - You'll love this one!  
-    - **5.0–6.9** → Good match, give it a try  
-    - **3.0–4.9** → Quite different, but some similar notes
+        **How to read the match score:**
+
+        - **7.0–10.0** → Excellent match — You'll love this one!  
+        - **5.0–6.9** → Good match, give it a try  
+        - **3.0–4.9** → Quite different, but some similar notes
         """
         )
 
