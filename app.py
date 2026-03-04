@@ -171,6 +171,17 @@ with left:
 with right:
     st.subheader("Recommendations")
 
+    with st.expander("How to read the match score (out of 10)"):
+        st.markdown(
+        """
+    - **9.0–10.0** → Excellent match  
+    - **7.0–8.9** → Very good match  
+    - **5.0–6.9** → Good match  
+    - **3.0–4.9** → Possible match  
+    - **0.0–2.9** → Weak match
+        """
+        )
+
     # Build query notes from typed notes
     raw = split_notes(notes_text)
     query_notes = expand_query_notes(raw)
