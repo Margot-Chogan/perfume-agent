@@ -234,7 +234,7 @@ import traceback
 
 try:
     external, external_ws = load_external_from_sheets()
-    st.success(f"Loaded external perfumes from Google Sheets: {len(external)} rows")
+ #  st.success(f"Loaded external perfumes from Google Sheets: {len(external)} rows")
 except Exception:
     st.error("Could not load external perfumes from Google Sheets (full error below):")
     st.code(traceback.format_exc())
