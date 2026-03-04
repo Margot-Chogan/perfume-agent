@@ -5,9 +5,6 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 
-import traceback
-st.code(traceback.format_exc())
-
 # ---------- External perfumes columns ----------
 EXPECTED_EXTERNAL_COLS = [
     "Perfume",
