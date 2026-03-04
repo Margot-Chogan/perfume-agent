@@ -400,13 +400,20 @@ with right:
                 query_base,
                 query_notes_base=query_notes_base,
             )
+
+                # ✅ Perfect inspiration boost (string match)
+            if mode == "By non-Chogan perfume name" and perfume_name.strip():
+                insp_text = str(row.get("Inspiration", "")).lower()
+                if perfume_name.strip().lower() in insp_text:
+                    sc += 4.0   # tweak: try 3.0–6.0
+            
             results.append((sc, matched, row))
 
         results.sort(key=lambda x: x[0], reverse=True)
 
         max_score = compute_max_score(query_top, query_heart, query_base, query_notes_base)
-
         good_matches = [r for r in results if (r[0] / max_score) * 10 >= 3][:top_n]
+        score_10 = (sc / max_score) * 10 if max_score > 0 else 0
 
         if not good_matches:
             st.warning(
