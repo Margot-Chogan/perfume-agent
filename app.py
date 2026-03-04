@@ -112,7 +112,8 @@ def get_gs_client():
 
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
-
+    
+st.write("Service account:", st.secrets["gcp_service_account"]["client_email"])
 
 def load_external_from_sheets():
     gc = get_gs_client()
