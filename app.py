@@ -173,34 +173,6 @@ def weighted_score(query_notes, row, query_top=None, query_heart=None, query_bas
 
     return score, matched, top | heart | base
 
-def get_external_worksheet():
-    gc = get_gs_client()
-    sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
-    ws_name = st.secrets["external_sheet"]["worksheet_name"]
-    return gc.open_by_key(sheet_id).worksheet(ws_name)
-
-def ensure_external_headers(ws):
-    """Ensure row 1 headers match EXPECTED_EXTERNAL_COLS."""
-    headers = ws.row_values(1)
-    if headers != EXPECTED_EXTERNAL_COLS:
-        ws.clear()
-        ws.append_row(EXPECTED_EXTERNAL_COLS)
-
-def load_external_from_sheets():
-    gc = get_gs_client()
-    sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
-    ws_name = st.secrets["external_sheet"]["worksheet_name"]
-
-    ws = gc.open_by_key(sheet_id).worksheet(ws_name)
-    records = ws.get_all_records()
-
-    df = pd.DataFrame(records)
-    for col in EXPECTED_EXTERNAL_COLS:
-        if col not in df.columns:
-            df[col] = ""
-
-    return df[EXPECTED_EXTERNAL_COLS], ws
-
 def standardize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [str(c).strip() for c in df.columns]
 
