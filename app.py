@@ -146,11 +146,18 @@ EXPECTED_EXTERNAL_COLS = [
 def upsert_external_to_sheets(ws, row_dict):
     """
     Update row if Perfume+Brand matches (case-insensitive), else append.
-    Header order:
-    Perfume | Brand | Gender | Top Notes | Heart Notes | Base Notes | All Notes | Olfactory Family
+    Accepts either a gspread Worksheet or (accidentally) a Spreadsheet;
+    will recover by opening the worksheet from secrets.
     """
 
-    # Ensure headers match the expected order
+    # If ws is not a Worksheet (no row_values), recover by opening worksheet properly
+    if ws is None or not hasattr(ws, "row_values"):
+        gc = get_gs_client()
+        sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
+        ws_name = st.secrets["external_sheet"]["worksheet_name"]
+        ws = gc.open_by_key(sheet_id).worksheet(ws_name)
+
+    # Ensure headers match expected
     headers = ws.row_values(1)
     if headers != EXPECTED_EXTERNAL_COLS:
         ws.clear()
@@ -162,7 +169,7 @@ def upsert_external_to_sheets(ws, row_dict):
     key_brand = row_dict.get("Brand", "").strip().lower()
 
     target_row = None
-    for i, r in enumerate(records, start=2):  # data starts on row 2
+    for i, r in enumerate(records, start=2):
         p = str(r.get("Perfume", "")).strip().lower()
         b = str(r.get("Brand", "")).strip().lower()
         if p == key_perfume and b == key_brand:
@@ -197,16 +204,17 @@ def ensure_external_headers(ws):
         ws.append_row(EXPECTED_EXTERNAL_COLS)
 
 def load_external_from_sheets():
-    ws = get_external_worksheet()
-    ensure_external_headers(ws)
+    gc = get_gs_client()
+    sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
+    ws_name = st.secrets["external_sheet"]["worksheet_name"]
 
-    records = ws.get_all_records()  # uses row 1 as headers
+    ws = gc.open_by_key(sheet_id).worksheet(ws_name)
+    records = ws.get_all_records()
+
     df = pd.DataFrame(records)
-
-    # ensure all expected cols exist even if sheet is empty
-    for c in EXPECTED_EXTERNAL_COLS:
-        if c not in df.columns:
-            df[c] = ""
+    for col in EXPECTED_EXTERNAL_COLS:
+        if col not in df.columns:
+            df[col] = ""
 
     return df[EXPECTED_EXTERNAL_COLS], ws
 
