@@ -318,93 +318,93 @@ with left:
 
 with right:
     st.subheader("My Recommendations")
-    direct_matches_box = st.container()
 
     st.info(
-    """
-    **How to read the match score:**
+        """
+        **How to read the match score:**
 
-    - **7.0–10.0** → Excellent match — You'll love this one!  
-    - **5.0–6.9** → Good match, give it a try  
-    - **3.0–4.9** → Quite different, but some similar notes
-    """
+        - **7.0–10.0** → Excellent match — You'll love this one!  
+        - **5.0–6.9** → Good match, give it a try  
+        - **3.0–4.9** → Quite different, but some similar notes
+        """
     )
 
-    # Build query notes from typed notes
+    # A container that will always render on the RIGHT
+    direct_matches_box = st.container()
+
+    # ---- Build query notes from typed notes ----
     raw = split_notes(notes_text)
+    query_notes_base = set(normalize_note(n) for n in raw)      # denominator
+    query_notes_match = expand_query_notes(raw)                 # matching
 
-    query_notes_base = set(normalize_note(n) for n in raw)          # for denominator
-    query_notes_match = expand_query_notes(raw)                     # for matching
-    
-    # Initialize pyramid query sets
-    query_top = set()
-    query_heart = set()
-    query_base = set()
+    query_top, query_heart, query_base = set(), set(), set()
 
-    # If searching by perfume name, (A) show direct Chogan inspiration hits,
-# and (B) pull notes from external DB to do note-based recommendations.
-if mode == "By perfume name" and perfume_name.strip():
+    # We will compute direct hits (Chogan inspiration matches) here,
+    # but render them only inside direct_matches_box below.
+    direct_hits = chogan.iloc[0:0]
 
-    # ---- A) Direct matches in Chogan inspirations ----
-    direct_hits = find_chogan_direct_matches(chogan, perfume_name)
+    # ---- If searching by perfume name ----
+    if mode == "By perfume name" and perfume_name.strip():
 
-    # Optional: if user typed brand, narrow direct hits too
-    if brand_name.strip() and len(direct_hits) > 1:
-        direct_hits = direct_hits[
-            direct_hits["Inspiration"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
-        ]
+        # A) Direct hits in Chogan inspirations
+        direct_hits = find_chogan_direct_matches(chogan, perfume_name)
 
-    if len(direct_hits) > 0:
-        st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
+        if brand_name.strip() and len(direct_hits) > 1:
+            direct_hits = direct_hits[
+                direct_hits["Inspiration"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
+            ]
 
-        # Show top direct hits (use your same top_n slider)
-        for rank, (_, hit) in enumerate(direct_hits.head(top_n).iterrows(), start=1):
-            ref = (
-                hit.get("Perfume reference")
-                or hit.get("Perfume ref.")
-                or hit.get("Reference")
-                or hit.get("Code")
-                or hit.get("ID")
-                or ""
-            )
+        # B) Pull notes from external DB (so we can still do note-based matching)
+        mask = external["Perfume"].fillna("").str.lower().str.contains(perfume_name.strip().lower(), na=False)
+        matches = external[mask]
 
-            st.markdown(f"### ✅ Direct match #{rank} — **{ref}**")
-            st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
-            st.write(f"Family: *{hit.get('Olfactory Family','')}*")
-            st.write(f"Top: {hit.get('Top Notes','')}")
-            st.write(f"Heart: {hit.get('Heart Notes','')}")
-            st.write(f"Base: {hit.get('Base Notes','')}")
-            st.divider()
+        if brand_name.strip() and len(matches) > 1:
+            bmask = matches["Brand"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
+            matches = matches[bmask]
 
-    # ---- B) Existing external lookup (notes source) ----
-    mask = external["Perfume"].fillna("").str.lower().str.contains(perfume_name.strip().lower(), na=False)
-    matches = external[mask]
+        if len(matches) > 0:
+            used_external = matches.iloc[0].to_dict()
 
-    if brand_name.strip() and len(matches) > 1:
-        bmask = matches["Brand"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
-        matches = matches[bmask]
+            query_top = set(normalize_note(n) for n in split_notes(used_external.get("Top Notes", "")))
+            query_heart = set(normalize_note(n) for n in split_notes(used_external.get("Heart Notes", "")))
+            query_base = set(normalize_note(n) for n in split_notes(used_external.get("Base Notes", "")))
 
-    if len(matches) > 0:
-        used_external = matches.iloc[0].to_dict()
+            ext_notes = query_top | query_heart | query_base
+            if not ext_notes:
+                ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
 
-        query_top = set(normalize_note(n) for n in split_notes(used_external.get("Top Notes", "")))
-        query_heart = set(normalize_note(n) for n in split_notes(used_external.get("Heart Notes", "")))
-        query_base = set(normalize_note(n) for n in split_notes(used_external.get("Base Notes", "")))
+            query_notes_match |= ext_notes
+            query_notes_base |= ext_notes
 
-        ext_notes = query_top | query_heart | query_base
-        if not ext_notes:
-            ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
+            st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
+        else:
+            if len(direct_hits) == 0:
+                st.warning("No saved notes found and no direct Chogan inspiration match. Try a different name or add it below.")
 
-        query_notes_match |= ext_notes
-        query_notes_base |= ext_notes
+    # ✅ Render direct matches ON THE RIGHT (below the score info)
+    with direct_matches_box:
+        if len(direct_hits) > 0:
+            st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
 
-        st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
-    else:
-        # If no external notes AND no direct hits, tell user
-        if len(direct_hits) == 0:
-            st.warning("No saved notes found and no direct Chogan inspiration match. Try a different name or add it below.")
+            for rank, (_, hit) in enumerate(direct_hits.head(top_n).iterrows(), start=1):
+                ref = (
+                    hit.get("Perfume reference")
+                    or hit.get("Perfume ref.")
+                    or hit.get("Reference")
+                    or hit.get("Code")
+                    or hit.get("ID")
+                    or ""
+                )
 
-    # Apply filters to Chogan catalog
+                st.markdown(f"### ✅ Direct match #{rank} — **{ref}**")
+                st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
+                st.write(f"Family: *{hit.get('Olfactory Family','')}*")
+                st.write(f"Top: {hit.get('Top Notes','')}")
+                st.write(f"Heart: {hit.get('Heart Notes','')}")
+                st.write(f"Base: {hit.get('Base Notes','')}")
+                st.divider()
+
+    # ---- Apply filters to Chogan catalog ----
     filtered = chogan.copy()
 
     if family_filter.strip() and "Olfactory Family" in filtered.columns:
@@ -414,7 +414,6 @@ if mode == "By perfume name" and perfume_name.strip():
 
     if "Gender" in filtered.columns:
         g = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
-
         if gender_choice == "Women (F)":
             filtered = filtered[g == "F"]
         elif gender_choice == "Men (M)":
@@ -426,7 +425,12 @@ if mode == "By perfume name" and perfume_name.strip():
         elif gender_choice == "Men or Unisex (M/U)":
             filtered = filtered[g.isin(["M", "U"])]
 
-    # Score and rank
+    # ✅ If we already have direct hits, DO NOT show the same Chogan inspiration again as a low-score recommendation
+    if len(direct_hits) > 0 and "Inspiration" in filtered.columns:
+        direct_insp = set(direct_hits["Inspiration"].fillna("").astype(str).str.lower())
+        filtered = filtered[~filtered["Inspiration"].fillna("").astype(str).str.lower().isin(direct_insp)]
+
+    # ---- Score and rank ----
     if not query_notes_base:
         st.write("Enter notes or select a saved perfume below to get recommendations.")
     else:
@@ -440,56 +444,49 @@ if mode == "By perfume name" and perfume_name.strip():
                 query_base,
                 query_notes_base=query_notes_base,
             )
-            
-                # ✅ Perfect inspiration boost (string match)
-            if mode == "By perfume name" and perfume_name.strip():
-                insp_text = str(row.get("Inspiration", "")).lower()
-                if perfume_name.strip().lower() in insp_text:
-                    sc += 4.0   # tweak: try 3.0–6.0
-            
             results.append((sc, matched, row))
 
         results.sort(key=lambda x: x[0], reverse=True)
 
         max_score = compute_max_score(query_top, query_heart, query_base, query_notes_base)
-        good_matches = [r for r in results if (r[0] / max_score) * 10 >= 3][:top_n]
-        score_10 = (sc / max_score) * 10 if max_score > 0 else 0
-
-        if not good_matches:
-            st.warning(
-                "Sorry, we don't have a good match for the notes in the perfume you are looking for. "
-                "Would you like to try something else?"
-            )
+        if max_score <= 0:
+            st.warning("Add some notes to get recommendations.")
         else:
-            for rank, (sc, matched, row) in enumerate(good_matches, start=1):
-        
-                score_10 = (sc / max_score) * 10 if max_score > 0 else 0
-                score_10 = min(score_10, 10.0)
-        
-                ref = (
-                    row.get("Perfume reference")
-                    or row.get("Perfume ref.")
-                    or row.get("Reference")
-                    or row.get("Code")
-                    or row.get("ID")
-                    or ""
+            good_matches = [r for r in results if (r[0] / max_score) * 10 >= 3][:top_n]
+
+            if not good_matches:
+                st.warning(
+                    "Sorry, we don't have a good match for the notes in the perfume you are looking for. "
+                    "Would you like to try something else?"
                 )
-        
-                insp = row.get("Inspiration", "")
-                fam = row.get("Olfactory Family", "")
-                top = row.get("Top Notes", "")
-                heart = row.get("Heart Notes", "")
-                base = row.get("Base Notes", "")
-        
-                st.markdown(f"### #{rank} — **{ref}**")
-                st.write(f"Inspiration: *{insp}*")
-                st.write(f"Family: *{fam}*")
-                st.write(f"**Match score:** {score_10:.2f} / 10")
-                st.write(f"**Matched notes:** {', '.join(sorted(matched)) if matched else 'None'}")
-                st.write(f"Top: {top}")
-                st.write(f"Heart: {heart}")
-                st.write(f"Base: {base}")
-                st.divider()
+            else:
+                for rank, (sc, matched, row) in enumerate(good_matches, start=1):
+                    score_10 = min((sc / max_score) * 10, 10.0)
+
+                    ref = (
+                        row.get("Perfume reference")
+                        or row.get("Perfume ref.")
+                        or row.get("Reference")
+                        or row.get("Code")
+                        or row.get("ID")
+                        or ""
+                    )
+
+                    insp = row.get("Inspiration", "")
+                    fam = row.get("Olfactory Family", "")
+                    top = row.get("Top Notes", "")
+                    heart = row.get("Heart Notes", "")
+                    base = row.get("Base Notes", "")
+
+                    st.markdown(f"### #{rank} — **{ref}**")
+                    st.write(f"Inspiration: *{insp}*")
+                    st.write(f"Family: *{fam}*")
+                    st.write(f"**Match score:** {score_10:.2f} / 10")
+                    st.write(f"**Matched notes:** {', '.join(sorted(matched)) if matched else 'None'}")
+                    st.write(f"Top: {top}")
+                    st.write(f"Heart: {heart}")
+                    st.write(f"Base: {base}")
+                    st.divider()
 
 # ---------- Add / Update External Perfume ----------
 st.subheader("Add / Update an External Perfume (manual entry)")
