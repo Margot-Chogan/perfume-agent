@@ -136,10 +136,10 @@ PILLARS = {
 # notes -> which pillars are present
 def detect_pillars(notes_set: set[str]) -> set[str]:
     found = set()
-    notes_text = " | ".join(notes_set)  # one string for substring checks
+    blob = " | ".join(notes_set)  # one string
     for pillar, kws in PILLARS.items():
         for kw in kws:
-            if kw in notes_text:
+            if kw in blob:
                 found.add(pillar)
                 break
     return found
