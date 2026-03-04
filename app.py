@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import re
+import gspread
+from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="Find your Chogan Perfume", layout="wide")
 
@@ -107,13 +109,72 @@ def weighted_score(query_notes, row, query_top=None, query_heart=None, query_bas
 EXPECTED_EXTERNAL_COLS = [
     "Perfume",
     "Brand",
+    "Gender"
     "Top Notes",
     "Heart Notes",
     "Base Notes",
     "All Notes",
     "Olfactory Family",
-    "Gender",
 ]
+
+@st.cache_resource
+def get_gs_client():
+    creds_info = st.secrets["gcp_service_account"]
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+    return gspread.authorize(creds)
+
+def get_external_worksheet():
+    gc = get_gs_client()
+    sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
+    ws_name = st.secrets["external_sheet"]["worksheet_name"]
+    return gc.open_by_key(sheet_id).worksheet(ws_name)
+
+def ensure_external_headers(ws):
+    """Ensure row 1 headers match EXPECTED_EXTERNAL_COLS."""
+    headers = ws.row_values(1)
+    if headers != EXPECTED_EXTERNAL_COLS:
+        ws.clear()
+        ws.append_row(EXPECTED_EXTERNAL_COLS)
+
+def load_external_from_sheets():
+    ws = get_external_worksheet()
+    ensure_external_headers(ws)
+
+    records = ws.get_all_records()  # uses row 1 as headers
+    df = pd.DataFrame(records)
+
+    # ensure all expected cols exist even if sheet is empty
+    for c in EXPECTED_EXTERNAL_COLS:
+        if c not in df.columns:
+            df[c] = ""
+
+    return df[EXPECTED_EXTERNAL_COLS], ws
+
+def upsert_external_to_sheets(ws, row_dict):
+    """
+    Update row if Perfume+Brand matches (case-insensitive), else append.
+    """
+    ensure_external_headers(ws)
+    records = ws.get_all_records()
+
+    key_perfume = row_dict.get("Perfume", "").strip().lower()
+    key_brand = row_dict.get("Brand", "").strip().lower()
+
+    target_row = None
+    for i, r in enumerate(records, start=2):  # data starts on row 2
+        p = str(r.get("Perfume", "")).strip().lower()
+        b = str(r.get("Brand", "")).strip().lower()
+        if p == key_perfume and b == key_brand:
+            target_row = i
+            break
+
+    values = [row_dict.get(c, "") for c in EXPECTED_EXTERNAL_COLS]
+
+    if target_row:
+        ws.update(f"A{target_row}:H{target_row}", [values])
+    else:
+        ws.append_row(values)
 
 def standardize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [str(c).strip() for c in df.columns]
@@ -151,10 +212,6 @@ def standardize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
 def load_chogan_csv(path):
     return pd.read_csv(path)
 
-def load_external_csv(path):
-    # not cached; we want updates after saving
-    return pd.read_csv(path)
-
 try:
     chogan = load_chogan_csv("chogan_catalog.csv")
 except Exception:
@@ -166,6 +223,32 @@ try:
     external = standardize_external_columns(external)
 except Exception:
     external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
+
+@st.cache_resource
+def get_gs_client():
+    creds_info = st.secrets["gcp_service_account"]
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+
+    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
+    return gspread.authorize(creds)
+
+
+def load_external_from_sheets():
+    gc = get_gs_client()
+
+    sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
+    ws_name = st.secrets["external_sheet"]["worksheet_name"]
+
+    ws = gc.open_by_key(sheet_id).worksheet(ws_name)
+
+    records = ws.get_all_records()
+    df = pd.DataFrame(records)
+
+    for col in EXPECTED_EXTERNAL_COLS:
+        if col not in df.columns:
+            df[col] = ""
+
+    return df[EXPECTED_EXTERNAL_COLS], ws
 
 # ---------- UI ----------
 st.title("Find your Chogan Perfume")
@@ -341,37 +424,30 @@ if submitted:
     if not new_perfume.strip():
         st.error("Perfume name is required.")
     else:
-        # Reload external fresh, upsert, then save
-        try:
-            external_latest = load_external_csv("external_perfumes.csv")
-            external_latest = standardize_external_columns(external_latest)
-        except Exception:
-            external_latest = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
-
-        key_mask = (
-            external_latest["Perfume"].fillna("").str.lower().str.strip() == new_perfume.strip().lower()
-        ) & (
-            external_latest["Brand"].fillna("").str.lower().str.strip() == new_brand.strip().lower()
-        )
-
+        # Save to Google Sheets
         new_row = {
             "Perfume": new_perfume.strip(),
             "Brand": new_brand.strip(),
+            "Gender": new_gender.strip(),
             "Top Notes": new_top.strip(),
             "Heart Notes": new_heart.strip(),
             "Base Notes": new_base.strip(),
             "All Notes": new_all.strip(),
             "Olfactory Family": new_family.strip(),
-            "Gender": new_gender.strip(),
         }
 
-        if key_mask.any():
-            external_latest.loc[key_mask, :] = pd.DataFrame([new_row]).iloc[0]
-        else:
-            external_latest = pd.concat([external_latest, pd.DataFrame([new_row])], ignore_index=True)
+        external_ws.append_row([
+            new_row["Perfume"],
+            new_row["Brand"],
+            new_row["Gender"],
+            new_row["Top Notes"],
+            new_row["Heart Notes"],
+            new_row["Base Notes"],
+            new_row["All Notes"],
+            new_row["Olfactory Family"],
+        ])
 
-        external_latest.to_csv("external_perfumes.csv", index=False)
-        st.success("Saved.")
+        st.success("Saved to Google Sheets.")
         st.rerun()
 
 with st.expander("View saved external perfumes"):
