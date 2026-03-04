@@ -136,9 +136,12 @@ PILLARS = {
 # notes -> which pillars are present
 def detect_pillars(notes_set: set[str]) -> set[str]:
     found = set()
+    notes_text = " | ".join(notes_set)  # one string for substring checks
     for pillar, kws in PILLARS.items():
-        if notes_set & kws:
-            found.add(pillar)
+        for kw in kws:
+            if kw in notes_text:
+                found.add(pillar)
+                break
     return found
 
 def normalize_note(n: str) -> str:
