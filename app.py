@@ -140,23 +140,30 @@ with right:
             st.warning("No saved notes found for that perfume. Add it below (manual entry) to reuse next time.")
 
     # Apply filters
-    filtered = chogan.copy()
-    if family_filter.strip():
-        filtered = filtered[filtered["Olfactory Family"].fillna("").str.lower().str.contains(family_filter.strip().lower())]
-    if "Gender" in filtered.columns:
+filtered = chogan.copy()
+
+if family_filter.strip():
+    filtered = filtered[filtered["Olfactory Family"].fillna("").str.lower().str.contains(family_filter.strip().lower())]
+
+if "Gender" in filtered.columns:
     g = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
 
     if gender_choice == "Women (F)":
         filtered = filtered[g == "F"]
+
     elif gender_choice == "Men (M)":
         filtered = filtered[g == "M"]
+
     elif gender_choice == "Unisex (U)":
         filtered = filtered[g == "U"]
+
     elif gender_choice == "Women or Unisex (F/U)":
         filtered = filtered[g.isin(["F", "U"])]
+
     elif gender_choice == "Men or Unisex (M/U)":
         filtered = filtered[g.isin(["M", "U"])]
-    # "Any" -> no filter]
+
+    # "Any" → no filter
 
     # Score and rank
     results = []
