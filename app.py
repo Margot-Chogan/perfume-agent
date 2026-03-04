@@ -46,17 +46,17 @@ def weighted_score(query_notes, row):
 
     for n in query_notes:
         if n in top:
-            score += 1.0
-            matched.add(n)
+        score += 1.0
+        matched.add(n)
         elif n in heart:
-            score += 1.2
-            matched.add(n)
+        score += 1.2
+        matched.add(n)
         elif n in base:
-            score += 1.3
-            matched.add(n)
-       elif n in all_notes:
-            score += 1.1  # unknown layer, medium weight
-            matched.add(n)     
+        score += 1.3
+        matched.add(n)
+        elif n in all_notes:
+        score += 1.1
+        matched.add(n)    
 
     # bonus if all requested notes are present somewhere
     all_combined = top | heart | base | all_notes
