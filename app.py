@@ -4,6 +4,7 @@ import re
 import json
 import gspread
 from google.oauth2.service_account import Credentials
+from difflib import SequenceMatcher
 
 # ---------- External perfumes columns ----------
 EXPECTED_EXTERNAL_COLS = [
@@ -345,6 +346,15 @@ with right:
 
     # ---- If searching by perfume name ----
     if mode == "By perfume name" and perfume_name.strip():
+    search = perfume_name.strip().lower()
+    insp_text = str(row.get("Inspiration", "")).lower()
+
+    similarity = SequenceMatcher(None, search, insp_text).ratio()
+
+    if similarity > 0.8:
+        sc += 5.0   # almost exact perfume match
+    elif similarity > 0.6:
+        sc += 3.0   # strong similarity
 
         # A) Direct hits in Chogan inspirations
         direct_hits = find_chogan_direct_matches(chogan, perfume_name)
