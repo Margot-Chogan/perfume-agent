@@ -286,6 +286,8 @@ with st.form("add_external"):
         new_heart = st.text_input("Heart Notes (comma-separated)")
         new_base = st.text_input("Base Notes (comma-separated)")
         new_all = st.text_input("All Notes (comma-separated) — use if no pyramid")
+    with st.expander("View saved external perfumes"):
+    st.dataframe(external.tail(20))
 
     submitted = st.form_submit_button("Save external perfume")
 
