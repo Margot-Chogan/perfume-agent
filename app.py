@@ -5,6 +5,9 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 
+import traceback
+st.code(traceback.format_exc())
+
 # ---------- External perfumes columns ----------
 EXPECTED_EXTERNAL_COLS = [
     "Perfume",
@@ -263,7 +266,18 @@ except Exception:
     st.code(traceback.format_exc())
     external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
     external_ws = None
-    
+
+def compute_max_score(query_top, query_heart, query_base, query_notes_base):
+    # pyramid mode
+    if query_top or query_heart or query_base:
+        return (
+            2.0 * len(query_top) +
+            1.6 * len(query_heart) +
+            1.4 * len(query_base)
+        )
+
+    # notes-only mode
+    return 1.6 * len(query_notes_base)
 # ---------- UI ----------
 st.title("Find your Chogan Perfume")
 
