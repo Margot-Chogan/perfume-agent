@@ -8,23 +8,17 @@ st.set_page_config(page_title="Find your Chogan Perfume", layout="wide")
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
         return []
-    # split on commas, semicolons, slashes
     parts = re.split(r"[,/;]+", str(x))
     return [p.strip().lower() for p in parts if p.strip()]
 
-# Small starter synonym map (you will expand this over time)
 SYNONYMS = {
     "cedarwood": "cedar",
     "woody notes": "woody",
     "woods": "woody",
-    "musk": "musk",
     "white musk": "musk",
-    "orange blossom": "orange blossom",
-    "neroli": "neroli",
 }
 
 EXPAND_KEYWORDS = {
-    # Broad categories -> likely notes in databases
     "wood": ["woody", "woods", "cedar", "sandalwood", "vetiver", "patchouli", "guaiac wood", "cashmeran", "oakmoss"],
     "woody": ["woody", "woods", "cedar", "sandalwood", "vetiver", "patchouli", "cashmeran", "oakmoss"],
     "berry": ["berries", "red berries", "wild berries", "blackcurrant", "currant", "raspberry", "strawberry"],
@@ -32,99 +26,74 @@ EXPAND_KEYWORDS = {
     "floral": ["rose", "jasmine", "orange blossom", "ylang-ylang", "tuberose", "iris", "violet", "peony", "lavender"],
     "vanilla": ["vanilla", "tonka bean", "benzoin"],
     "amber": ["amber", "ambergris", "labdanum", "benzoin"],
-    "musk": ["musk", "white musk", "ambergris"],
+    "musk": ["musk", "ambergris"],
 }
 
-def normalize_note(n):
-    n = n.strip().lower()
+def normalize_note(n: str) -> str:
+    n = str(n).strip().lower()
     return SYNONYMS.get(n, n)
 
 def expand_query_notes(raw_notes_list):
     expanded = set()
-
     for n in raw_notes_list:
         n = normalize_note(n)
+        if not n:
+            continue
         expanded.add(n)
-
-        # if it's a broad keyword, expand it
         if n in EXPAND_KEYWORDS:
             for extra in EXPAND_KEYWORDS[n]:
                 expanded.add(normalize_note(extra))
-
     return expanded
 
-def notes_set(row):
-    top = split_notes(row.get("Top Notes", ""))
-    heart = split_notes(row.get("Heart Notes", ""))
-    base = split_notes(row.get("Base Notes", ""))
-    alln = [normalize_note(n) for n in (top + heart + base)]
-    return set([n for n in alln if n])
-
 def weighted_score(query_notes, row):
-
-    # collect notes from each layer
     top = set(normalize_note(n) for n in split_notes(row.get("Top Notes", "")))
     heart = set(normalize_note(n) for n in split_notes(row.get("Heart Notes", "")))
     base = set(normalize_note(n) for n in split_notes(row.get("Base Notes", "")))
+
+    # For external perfumes that may use All Notes, and for future-proofing
     all_notes = set(normalize_note(n) for n in split_notes(row.get("All Notes", "")))
 
     score = 0.0
     matched = set()
 
     for n in query_notes:
-
         if n in top:
             score += 1.0
             matched.add(n)
-
         elif n in heart:
             score += 1.2
             matched.add(n)
-
         elif n in base:
             score += 1.3
             matched.add(n)
-
         elif n in all_notes:
             score += 1.1
             matched.add(n)
 
-    # bonus if all notes appear somewhere
     all_combined = top | heart | base | all_notes
-
     if query_notes and query_notes.issubset(all_combined):
         score += 2.0
 
     return score, matched, all_combined
 
-# ---------- Load data ----------
-@st.cache_data
-def load_chogan_csv(path):
-    return pd.read_csv(path)
-
-def load_external_csv(path):
-    # DO NOT cache this one; it changes when you add perfumes
-    return pd.read_csv(path)
-
-try:
-    chogan = load_chogan_csv("chogan_catalog.csv")
-try:
-    external = load_external_csv("external_perfumes.csv")
-    external = standardize_external_columns(external)
-except Exception:
-    external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
-
-EXPECTED_EXTERNAL_COLS = ["Perfume", "Brand", "Top Notes", "Heart Notes", "Base Notes", "All Notes", "Olfactory Family"]
+# ---------- External perfumes column standardization ----------
+EXPECTED_EXTERNAL_COLS = [
+    "Perfume",
+    "Brand",
+    "Top Notes",
+    "Heart Notes",
+    "Base Notes",
+    "All Notes",
+    "Olfactory Family",
+    "Gender",
+]
 
 def standardize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
-    # Strip whitespace from headers
     df.columns = [str(c).strip() for c in df.columns]
 
-    # Map common variations -> expected names
     rename_map = {}
     for c in df.columns:
         lc = str(c).strip().lower()
-
         if lc in ["perfume", "perfume name", "name", "fragrance", "parfum"]:
             rename_map[c] = "Perfume"
         elif lc in ["brand", "house", "designer", "maker"]:
@@ -139,19 +108,34 @@ def standardize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
             rename_map[c] = "All Notes"
         elif lc in ["olfactory family", "family", "accords"]:
             rename_map[c] = "Olfactory Family"
+        elif lc in ["gender", "sex"]:
+            rename_map[c] = "Gender"
 
     df = df.rename(columns=rename_map)
 
-    # Ensure all expected columns exist
     for col in EXPECTED_EXTERNAL_COLS:
         if col not in df.columns:
             df[col] = ""
 
-    # Keep only expected columns (in a consistent order)
     return df[EXPECTED_EXTERNAL_COLS]
 
+# ---------- Load data ----------
+@st.cache_data
+def load_chogan_csv(path):
+    return pd.read_csv(path)
+
+def load_external_csv(path):
+    # not cached; we want updates after saving
+    return pd.read_csv(path)
+
 try:
-    external = load_csv("external_perfumes.csv")
+    chogan = load_chogan_csv("chogan_catalog.csv")
+except Exception:
+    st.error("Could not load chogan_catalog.csv. Make sure it is in your repo.")
+    st.stop()
+
+try:
+    external = load_external_csv("external_perfumes.csv")
     external = standardize_external_columns(external)
 except Exception:
     external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
@@ -166,54 +150,60 @@ with left:
     mode = st.radio("Choose input type:", ["By non-Chogan perfume name", "By notes only"])
 
     perfume_name = ""
+    brand_name = ""
+
     if mode == "By non-Chogan perfume name":
         perfume_name = st.text_input("Perfume name (e.g., Nina)")
         brand_name = st.text_input("Brand (optional, e.g., Nina Ricci)")
-    else:
-        brand_name = ""
 
     notes_text = st.text_input("Desired notes (comma-separated)", placeholder="e.g., jasmine, lavender, woody")
 
     st.subheader("Filters (optional)")
     family_filter = st.text_input("Olfactory family contains", placeholder="e.g., floral, oriental, woody")
-    gender_choice = st.selectbox(
-    "Gender preference",
-    ["Any", "Women (F)", "Men (M)", "Unisex (U)", "Women or Unisex (F/U)", "Men or Unisex (M/U)"]
-)
 
-    top_n = st.slider("How many results?", 1, 3, 5)
+    gender_choice = st.selectbox(
+        "Gender preference",
+        ["Any", "Women (F)", "Men (M)", "Unisex (U)", "Women or Unisex (F/U)", "Men or Unisex (M/U)"],
+    )
+
+    top_n = st.slider("How many recommendations?", 1, 5, 3)
 
 with right:
     st.subheader("Recommendations")
 
-    # Build query notes
+    # Build query notes from typed notes
     raw = split_notes(notes_text)
     query_notes = expand_query_notes(raw)
 
-    # If perfume name mode, try to find saved external perfume and use its notes
-    used_external = None
+    # If searching by non-Chogan perfume name, pull notes from external DB
     if mode == "By non-Chogan perfume name" and perfume_name.strip():
-        mask = external["Perfume"].fillna("").str.lower().str.contains(perfume_name.strip().lower())
-        if brand_name.strip():
-            mask = mask & external["Brand"].fillna("").str.lower().str.contains(brand_name.strip().lower())
+        mask = external["Perfume"].fillna("").str.lower().str.contains(perfume_name.strip().lower(), na=False)
         matches = external[mask]
+
+        # Only narrow by brand if multiple matches
+        if brand_name.strip() and len(matches) > 1:
+            bmask = matches["Brand"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
+            matches = matches[bmask]
 
         if len(matches) > 0:
             used_external = matches.iloc[0].to_dict()
+
             ext_notes = set()
             for col in ["Top Notes", "Heart Notes", "Base Notes", "All Notes"]:
                 ext_notes |= set(normalize_note(n) for n in split_notes(used_external.get(col, "")))
+
             query_notes |= ext_notes
+
             st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
         else:
             st.warning("No saved notes found for that perfume. Add it below (manual entry) to reuse next time.")
 
-    # Apply filters
+    # Apply filters to Chogan catalog
     filtered = chogan.copy()
 
-    if family_filter.strip():
+    if family_filter.strip() and "Olfactory Family" in filtered.columns:
         filtered = filtered[
-            filtered["Olfactory Family"].fillna("").str.lower().str.contains(family_filter.strip().lower())
+            filtered["Olfactory Family"].fillna("").str.lower().str.contains(family_filter.strip().lower(), na=False)
         ]
 
     if "Gender" in filtered.columns:
@@ -229,65 +219,69 @@ with right:
             filtered = filtered[g.isin(["F", "U"])]
         elif gender_choice == "Men or Unisex (M/U)":
             filtered = filtered[g.isin(["M", "U"])]
-        # Any = no filter
 
     # Score and rank
-    results = []
-    for _, row in filtered.iterrows():
-        sc, matched, alln = weighted_score(query_notes, row)
-        results.append((sc, matched, row))
-
-    results.sort(key=lambda x: x[0], reverse=True)
-
-    # Slice first, then remove zero-score results
-    top_results = results[:top_n]
-    top_results = [r for r in top_results if r[0] > 0]
-
-    # If no query notes, guide the user
     if not query_notes:
         st.write("Enter notes (or select a saved external perfume) to get recommendations.")
-
-    # If they did enter notes but nothing matched, show warning
-    elif not top_results:
-        st.warning(
-            "No close matches found. Try more specific notes (e.g., 'cedar', 'blackcurrant', 'vanilla') or remove one note."
-        )
-
-    # Otherwise, render the results
     else:
-        for rank, (sc, matched, row) in enumerate(top_results, start=1):
-            ref = row.get("Perfume ref.") or row.get("Reference") or row.get("Code") or row.get("ID") or ""
-            insp = row.get("Inspiration", "")
-            fam = row.get("Olfactory Family", "")
-            top = row.get("Top Notes", "")
-            heart = row.get("Heart Notes", "")
-            base = row.get("Base Notes", "")
+        results = []
+        for _, row in filtered.iterrows():
+            sc, matched, _ = weighted_score(query_notes, row)
+            results.append((sc, matched, row))
 
-            st.markdown(f"### #{rank} — **{ref}**")
-            st.write(f"Inspiration: *{insp}*")
-            st.write(f"Family: *{fam}*")
-            st.write(f"**Match score:** {sc:.2f}")
-            st.write(f"**Matched notes:** {', '.join(sorted(matched)) if matched else 'None'}")
-            st.write(f"Top: {top}")
-            st.write(f"Heart: {heart}")
-            st.write(f"Base: {base}")
-            st.divider()
+        results.sort(key=lambda x: x[0], reverse=True)
 
+        # Keep searching down the list until we collect up to top_n non-zero results
+        non_zero = [r for r in results if r[0] > 0][:top_n]
+
+        if not non_zero:
+            st.warning(
+                "No close matches found. Try more specific notes (e.g., 'cedar', 'blackcurrant', 'vanilla') or remove one note."
+            )
+        else:
+            for rank, (sc, matched, row) in enumerate(non_zero, start=1):
+                ref = (
+                    row.get("Perfume reference")
+                    or row.get("Perfume ref.")
+                    or row.get("Reference")
+                    or row.get("Code")
+                    or row.get("ID")
+                    or ""
+                )
+
+                insp = row.get("Inspiration", "")
+                fam = row.get("Olfactory Family", "")
+                top = row.get("Top Notes", "")
+                heart = row.get("Heart Notes", "")
+                base = row.get("Base Notes", "")
+
+                st.markdown(f"### #{rank} — **{ref}**")
+                st.write(f"Inspiration: *{insp}*")
+                st.write(f"Family: *{fam}*")
+                st.write(f"**Match score:** {sc:.2f}")
+                st.write(f"**Matched notes:** {', '.join(sorted(matched)) if matched else 'None'}")
+                st.write(f"Top: {top}")
+                st.write(f"Heart: {heart}")
+                st.write(f"Base: {base}")
+                st.divider()
+
+# ---------- Add / Update External Perfume ----------
 st.subheader("Add / Update an External (non-Chogan) Perfume (manual entry)")
+
 with st.form("add_external"):
     c1, c2 = st.columns(2)
+
     with c1:
         new_perfume = st.text_input("Perfume")
         new_brand = st.text_input("Brand")
         new_family = st.text_input("Olfactory Family (optional)")
-        new_gender = st.text_input("Gender (optional)")
+        new_gender = st.selectbox("Gender (optional)", ["", "F", "M", "U"], help="F=Women, M=Men, U=Unisex")
+
     with c2:
         new_top = st.text_input("Top Notes (comma-separated)")
         new_heart = st.text_input("Heart Notes (comma-separated)")
         new_base = st.text_input("Base Notes (comma-separated)")
         new_all = st.text_input("All Notes (comma-separated) — use if no pyramid")
-    with st.expander("View saved external perfumes"):
-    st.dataframe(external.tail(20))
 
     submitted = st.form_submit_button("Save external perfume")
 
@@ -295,12 +289,18 @@ if submitted:
     if not new_perfume.strip():
         st.error("Perfume name is required.")
     else:
-        # Upsert by Perfume + Brand
-        if "Perfume" not in external.columns:
-            external = pd.DataFrame(columns=["Perfume", "Brand", "Top Notes", "Heart Notes", "Base Notes", "Olfactory Family"])
+        # Reload external fresh, upsert, then save
+        try:
+            external_latest = load_external_csv("external_perfumes.csv")
+            external_latest = standardize_external_columns(external_latest)
+        except Exception:
+            external_latest = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
 
-        key_mask = (external["Perfume"].fillna("").str.lower() == new_perfume.strip().lower()) & \
-                   (external["Brand"].fillna("").str.lower() == new_brand.strip().lower())
+        key_mask = (
+            external_latest["Perfume"].fillna("").str.lower().str.strip() == new_perfume.strip().lower()
+        ) & (
+            external_latest["Brand"].fillna("").str.lower().str.strip() == new_brand.strip().lower()
+        )
 
         new_row = {
             "Perfume": new_perfume.strip(),
@@ -310,14 +310,17 @@ if submitted:
             "Base Notes": new_base.strip(),
             "All Notes": new_all.strip(),
             "Olfactory Family": new_family.strip(),
+            "Gender": new_gender.strip(),
         }
 
         if key_mask.any():
-            external.loc[key_mask, :] = pd.DataFrame([new_row]).iloc[0]
+            external_latest.loc[key_mask, :] = pd.DataFrame([new_row]).iloc[0]
         else:
-            external = pd.concat([external, pd.DataFrame([new_row])], ignore_index=True)
+            external_latest = pd.concat([external_latest, pd.DataFrame([new_row])], ignore_index=True)
 
-        external.to_csv("external_perfumes.csv", index=False)
-        st.success("Saved! (Note: on Streamlit Cloud, you’ll want to store this in Google Sheets or a small database—see next step.)")
+        external_latest.to_csv("external_perfumes.csv", index=False)
+        st.success("Saved.")
         st.rerun()
-        
+
+with st.expander("View saved external perfumes"):
+    st.dataframe(external.tail(50))
