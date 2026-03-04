@@ -5,13 +5,6 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 
-import streamlit as st
-import pandas as pd
-import re
-import json
-import gspread
-from google.oauth2.service_account import Credentials
-
 # ---------- External perfumes columns ----------
 EXPECTED_EXTERNAL_COLS = [
     "Perfume",
@@ -179,14 +172,6 @@ def weighted_score(query_notes, row, query_top=None, query_heart=None, query_bas
                 matched.add(n)
 
     return score, matched, top | heart | base
-
-@st.cache_resource
-def get_gs_client():
-    creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
-    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-
-    creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
-    return gspread.authorize(creds)
 
 def get_external_worksheet():
     gc = get_gs_client()
@@ -438,12 +423,13 @@ with st.form("add_external"):
 if submitted:
     if not new_perfume.strip():
         st.error("Perfume name is required.")
+    elif external_ws is None:
+        st.error("Google Sheets is not connected yet. Fix the error above first.")
     else:
-        # Build the row we want to save
         new_row = {
             "Perfume": new_perfume.strip(),
             "Brand": new_brand.strip(),
-            "Gender": new_gender.strip(),  # F / M / U / ""
+            "Gender": new_gender.strip(),
             "Top Notes": new_top.strip(),
             "Heart Notes": new_heart.strip(),
             "Base Notes": new_base.strip(),
@@ -451,9 +437,7 @@ if submitted:
             "Olfactory Family": new_family.strip(),
         }
 
-        # Upsert into Google Sheets (update if exists, else append)
         upsert_external_to_sheets(external_ws, new_row)
-
         st.success("Saved (updated if already existed).")
         st.rerun()
         
