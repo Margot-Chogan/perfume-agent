@@ -88,7 +88,7 @@ except Exception:
     external = pd.DataFrame(columns=["Perfume", "Brand", "Top Notes", "Heart Notes", "Base Notes", "All Notes", "Olfactory Family"])
 
 # ---------- UI ----------
-st.title("Perfume Recommendation Agent (Chogan)")
+st.title("Find your Chogan Perfume")
 
 left, right = st.columns([1, 2])
 
