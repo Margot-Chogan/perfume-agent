@@ -234,6 +234,8 @@ with right:
         # Keep searching down the list until we collect up to top_n non-zero results
         non_zero = [r for r in results if r[0] > 0][:top_n]
 
+        # Compute maximum possible score for display
+        max_score = len(query_notes) * 1.3 + 2
         if not non_zero:
             st.warning(
                 "No close matches found. Try more specific notes (e.g., 'cedar', 'blackcurrant', 'vanilla') or remove one note."
@@ -258,7 +260,8 @@ with right:
                 st.markdown(f"### #{rank} — **{ref}**")
                 st.write(f"Inspiration: *{insp}*")
                 st.write(f"Family: *{fam}*")
-                st.write(f"**Match score:** {sc:.2f}")
+                score_10 = (sc / max_score) * 10
+                st.write(f"**Match score:** {score_10:.2f} / 10")
                 st.write(f"**Matched notes:** {', '.join(sorted(matched)) if matched else 'None'}")
                 st.write(f"Top: {top}")
                 st.write(f"Heart: {heart}")
