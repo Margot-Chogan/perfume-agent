@@ -284,6 +284,38 @@ def load_external_from_sheets():
 
     return df[EXPECTED_EXTERNAL_COLS], ws
 
+def upsert_external_to_sheets(ws, row_dict):
+    """
+    Update row if Perfume+Brand matches (case-insensitive), else append.
+    Header order:
+    Perfume | Brand | Gender | Top Notes | Heart Notes | Base Notes | All Notes | Olfactory Family
+    """
+    # Ensure headers are correct
+    headers = ws.row_values(1)
+    if headers != EXPECTED_EXTERNAL_COLS:
+        ws.clear()
+        ws.append_row(EXPECTED_EXTERNAL_COLS)
+
+    records = ws.get_all_records()
+
+    key_perfume = row_dict.get("Perfume", "").strip().lower()
+    key_brand = row_dict.get("Brand", "").strip().lower()
+
+    target_row = None
+    for i, r in enumerate(records, start=2):
+        p = str(r.get("Perfume", "")).strip().lower()
+        b = str(r.get("Brand", "")).strip().lower()
+        if p == key_perfume and b == key_brand:
+            target_row = i
+            break
+
+    values = [row_dict.get(c, "") for c in EXPECTED_EXTERNAL_COLS]
+
+    if target_row:
+        ws.update(f"A{target_row}:H{target_row}", [values])
+    else:
+        ws.append_row(values)
+
 # ---------- UI ----------
 st.title("Find your Chogan Perfume")
 
