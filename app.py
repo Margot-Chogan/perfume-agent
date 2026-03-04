@@ -133,37 +133,33 @@ with right:
             ext_notes = set()
             for col in ["Top Notes", "Heart Notes", "Base Notes", "All Notes"]:
                 ext_notes |= set(normalize_note(n) for n in split_notes(used_external.get(col, "")))
-            # Merge with typed notes (if any)
             query_notes |= ext_notes
             st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
         else:
             st.warning("No saved notes found for that perfume. Add it below (manual entry) to reuse next time.")
 
     # Apply filters
-filtered = chogan.copy()
+    filtered = chogan.copy()
 
-if family_filter.strip():
-    filtered = filtered[filtered["Olfactory Family"].fillna("").str.lower().str.contains(family_filter.strip().lower())]
+    if family_filter.strip():
+        filtered = filtered[
+            filtered["Olfactory Family"].fillna("").str.lower().str.contains(family_filter.strip().lower())
+        ]
 
-if "Gender" in filtered.columns:
-    g = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
+    if "Gender" in filtered.columns:
+        g = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
 
-    if gender_choice == "Women (F)":
-        filtered = filtered[g == "F"]
-
-    elif gender_choice == "Men (M)":
-        filtered = filtered[g == "M"]
-
-    elif gender_choice == "Unisex (U)":
-        filtered = filtered[g == "U"]
-
-    elif gender_choice == "Women or Unisex (F/U)":
-        filtered = filtered[g.isin(["F", "U"])]
-
-    elif gender_choice == "Men or Unisex (M/U)":
-        filtered = filtered[g.isin(["M", "U"])]
-
-    # "Any" → no filter
+        if gender_choice == "Women (F)":
+            filtered = filtered[g == "F"]
+        elif gender_choice == "Men (M)":
+            filtered = filtered[g == "M"]
+        elif gender_choice == "Unisex (U)":
+            filtered = filtered[g == "U"]
+        elif gender_choice == "Women or Unisex (F/U)":
+            filtered = filtered[g.isin(["F", "U"])]
+        elif gender_choice == "Men or Unisex (M/U)":
+            filtered = filtered[g.isin(["M", "U"])]
+        # Any = no filter
 
     # Score and rank
     results = []
@@ -178,14 +174,17 @@ if "Gender" in filtered.columns:
         st.write("Enter notes (or select a saved external perfume) to get recommendations.")
     else:
         for rank, (sc, matched, row) in enumerate(top_results, start=1):
-            ref = row.get("Perfume ref.", "")
+            # Try multiple possible column names for the reference
+            ref = row.get("Perfume reference") or row.get("Reference") or row.get("Code") or row.get("ID") or ""
             insp = row.get("Inspiration", "")
             fam = row.get("Olfactory Family", "")
             top = row.get("Top Notes", "")
             heart = row.get("Heart Notes", "")
             base = row.get("Base Notes", "")
 
-            st.markdown(f"### #{rank} — **{ref}**  \nInspiration: *{insp}*  \nFamily: *{fam}*")
+            st.markdown(f"### #{rank} — **{ref}**")
+            st.write(f"Inspiration: *{insp}*")
+            st.write(f"Family: *{fam}*")
             st.write(f"**Match score:** {sc:.2f}")
             st.write(f"**Matched notes:** {', '.join(sorted(matched)) if matched else 'None'}")
             st.write(f"Top: {top}")
