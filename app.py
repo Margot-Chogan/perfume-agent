@@ -90,6 +90,13 @@ def upsert_external_to_sheets(ws, row_dict):
         ws.append_row(values)
 
 # ---------- Helpers ---------- 
+def find_chogan_direct_matches(chogan_df: pd.DataFrame, perfume_query: str) -> pd.DataFrame:
+    q = perfume_query.strip().lower()
+    if not q or "Inspiration" not in chogan_df.columns:
+        return chogan_df.iloc[0:0]
+
+    return chogan_df[chogan_df["Inspiration"].fillna("").str.lower().str.contains(q, na=False)]
+
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
         return []
@@ -288,12 +295,12 @@ left, right = st.columns([1, 2])
 
 with left:
     st.subheader("Search Mode")
-    mode = st.radio("Choose input type:", ["By non-Chogan perfume name", "By notes only"])
+    mode = st.radio("Choose input type:", ["By perfume name", "By notes only"])
 
     perfume_name = ""
     brand_name = ""
 
-    if mode == "By non-Chogan perfume name":
+    if mode == "By perfume name":
         perfume_name = st.text_input("Perfume name (e.g., Nina)")
         brand_name = st.text_input("Brand (optional, e.g., Nina Ricci)")
 
@@ -333,36 +340,68 @@ with right:
     query_heart = set()
     query_base = set()
 
-    # If searching by non-Chogan perfume name, pull notes from external DB
-    if mode == "By non-Chogan perfume name" and perfume_name.strip():
-        mask = external["Perfume"].fillna("").str.lower().str.contains(perfume_name.strip().lower(), na=False)
-        matches = external[mask]
+    # If searching by perfume name, (A) show direct Chogan inspiration hits,
+# and (B) pull notes from external DB to do note-based recommendations.
+if mode == "By perfume name" and perfume_name.strip():
 
-        # Only narrow by brand if multiple matches
-        if brand_name.strip() and len(matches) > 1:
-            bmask = matches["Brand"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
-            matches = matches[bmask]
+    # ---- A) Direct matches in Chogan inspirations ----
+    direct_hits = find_chogan_direct_matches(chogan, perfume_name)
 
-        if len(matches) > 0:
-            used_external = matches.iloc[0].to_dict()
-        
-            query_top = set(normalize_note(n) for n in split_notes(used_external.get("Top Notes", "")))
-            query_heart = set(normalize_note(n) for n in split_notes(used_external.get("Heart Notes", "")))
-            query_base = set(normalize_note(n) for n in split_notes(used_external.get("Base Notes", "")))
-        
-            ext_notes = query_top | query_heart | query_base
-        
-            # fallback if pyramid not specified
-            if not ext_notes:
-                ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
-        
-            query_notes_match |= ext_notes
-            query_notes_base |= ext_notes
-        
-            st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
-        
-        else:
-            st.warning("No saved notes found for that perfume. Add it below (manual entry) to reuse next time.")
+    # Optional: if user typed brand, narrow direct hits too
+    if brand_name.strip() and len(direct_hits) > 1:
+        direct_hits = direct_hits[
+            direct_hits["Inspiration"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
+        ]
+
+    if len(direct_hits) > 0:
+        st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
+
+        # Show top direct hits (use your same top_n slider)
+        for rank, (_, hit) in enumerate(direct_hits.head(top_n).iterrows(), start=1):
+            ref = (
+                hit.get("Perfume reference")
+                or hit.get("Perfume ref.")
+                or hit.get("Reference")
+                or hit.get("Code")
+                or hit.get("ID")
+                or ""
+            )
+
+            st.markdown(f"### ✅ Direct match #{rank} — **{ref}**")
+            st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
+            st.write(f"Family: *{hit.get('Olfactory Family','')}*")
+            st.write(f"Top: {hit.get('Top Notes','')}")
+            st.write(f"Heart: {hit.get('Heart Notes','')}")
+            st.write(f"Base: {hit.get('Base Notes','')}")
+            st.divider()
+
+    # ---- B) Existing external lookup (notes source) ----
+    mask = external["Perfume"].fillna("").str.lower().str.contains(perfume_name.strip().lower(), na=False)
+    matches = external[mask]
+
+    if brand_name.strip() and len(matches) > 1:
+        bmask = matches["Brand"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
+        matches = matches[bmask]
+
+    if len(matches) > 0:
+        used_external = matches.iloc[0].to_dict()
+
+        query_top = set(normalize_note(n) for n in split_notes(used_external.get("Top Notes", "")))
+        query_heart = set(normalize_note(n) for n in split_notes(used_external.get("Heart Notes", "")))
+        query_base = set(normalize_note(n) for n in split_notes(used_external.get("Base Notes", "")))
+
+        ext_notes = query_top | query_heart | query_base
+        if not ext_notes:
+            ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
+
+        query_notes_match |= ext_notes
+        query_notes_base |= ext_notes
+
+        st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
+    else:
+        # If no external notes AND no direct hits, tell user
+        if len(direct_hits) == 0:
+            st.warning("No saved notes found and no direct Chogan inspiration match. Try a different name or add it below.")
 
     # Apply filters to Chogan catalog
     filtered = chogan.copy()
@@ -402,7 +441,7 @@ with right:
             )
 
                 # ✅ Perfect inspiration boost (string match)
-            if mode == "By non-Chogan perfume name" and perfume_name.strip():
+            if mode == "By perfume name" and perfume_name.strip():
                 insp_text = str(row.get("Inspiration", "")).lower()
                 if perfume_name.strip().lower() in insp_text:
                     sc += 4.0   # tweak: try 3.0–6.0
@@ -452,7 +491,7 @@ with right:
                 st.divider()
 
 # ---------- Add / Update External Perfume ----------
-st.subheader("Add / Update an External (non-Chogan) Perfume (manual entry)")
+st.subheader("Add / Update an External Perfume (manual entry)")
 
 with st.form("add_external"):
     c1, c2 = st.columns(2)
