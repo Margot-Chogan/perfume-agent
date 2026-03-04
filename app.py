@@ -18,6 +18,7 @@ EXPECTED_EXTERNAL_COLS = [
     "Olfactory Family",
 ]
 
+# ---------- Google Sheets ----------
 @st.cache_resource
 def get_gs_client():
     creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
@@ -27,18 +28,6 @@ def get_gs_client():
     ]
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
-
-def quick_auth_test():
-    try:
-        gc = get_gs_client()
-        sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
-        gc.open_by_key(sheet_id)
-        st.success("Google auth looks OK and spreadsheet is accessible.")
-    except Exception:
-        st.error("Google auth failed (details below):")
-        import traceback
-        st.code(traceback.format_exc())
-        st.stop()
 
 def get_external_worksheet():
     gc = get_gs_client()
@@ -90,12 +79,11 @@ def upsert_external_to_sheets(ws, row_dict):
     else:
         ws.append_row(values)
 
-# ---------- Helpers ---------- 
+# ---------- Helpers ----------
 def find_chogan_direct_matches(chogan_df: pd.DataFrame, perfume_query: str) -> pd.DataFrame:
     q = perfume_query.strip().lower()
     if not q or "Inspiration" not in chogan_df.columns:
         return chogan_df.iloc[0:0]
-
     return chogan_df[chogan_df["Inspiration"].fillna("").str.lower().str.contains(q, na=False)]
 
 def split_notes(x):
@@ -138,8 +126,18 @@ def expand_query_notes(raw_notes_list):
                 expanded.add(normalize_note(extra))
     return expanded
 
-def weighted_score(query_notes_match, row, query_top=None, query_heart=None, query_base=None, query_notes_base=None):
+def compute_max_score(query_top, query_heart, query_base, query_notes_base):
+    # pyramid mode
+    if query_top or query_heart or query_base:
+        return (
+            2.0 * len(query_top) +
+            1.6 * len(query_heart) +
+            1.4 * len(query_base)
+        )
+    # notes-only mode
+    return 1.6 * len(query_notes_base)
 
+def weighted_score(query_notes_match, row, query_top=None, query_heart=None, query_base=None, query_notes_base=None):
     top = set(normalize_note(n) for n in split_notes(row.get("Top Notes", "")))
     heart = set(normalize_note(n) for n in split_notes(row.get("Heart Notes", "")))
     base = set(normalize_note(n) for n in split_notes(row.get("Base Notes", "")))
@@ -151,110 +149,51 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
     if query_top:
         for n in query_top:
             if n in top:
-                score += 2.0
-                matched.add(n)
+                score += 2.0; matched.add(n)
             elif n in heart:
-                score += 1.2
-                matched.add(n)
+                score += 1.2; matched.add(n)
             elif n in base:
-                score += 0.8
-                matched.add(n)
+                score += 0.8; matched.add(n)
 
     if query_heart:
         for n in query_heart:
             if n in heart:
-                score += 1.6
-                matched.add(n)
+                score += 1.6; matched.add(n)
             elif n in top:
-                score += 1.2
-                matched.add(n)
+                score += 1.2; matched.add(n)
             elif n in base:
-                score += 1.0
-                matched.add(n)
+                score += 1.0; matched.add(n)
 
     if query_base:
         for n in query_base:
             if n in base:
-                score += 1.4
-                matched.add(n)
+                score += 1.4; matched.add(n)
             elif n in heart:
-                score += 1.1
-                matched.add(n)
+                score += 1.1; matched.add(n)
 
     # fallback if pyramid not used
     if not (query_top or query_heart or query_base):
         for n in query_notes_match:
             if n in top:
-                score += 1.6
-                matched.add(n)
+                score += 1.6; matched.add(n)
             elif n in heart:
-                score += 1.2
-                matched.add(n)
+                score += 1.2; matched.add(n)
             elif n in base:
-                score += 1.0
-                matched.add(n)
+                score += 1.0; matched.add(n)
 
-    def compute_max_score(query_top, query_heart, query_base, query_notes_base):
-
-        # pyramid search
-        if query_top or query_heart or query_base:
-            return (
-                2.0 * len(query_top)
-                + 1.6 * len(query_heart)
-                + 1.4 * len(query_base)
-            )
-
-        # notes-only search
-        return 1.6 * len(query_notes_base)
-    
-    # ---------------- Perfect match boost ----------------
-    # query_notes_base = the original notes user asked for (NOT expanded synonyms)
+    # Perfect match boost (based on unexpanded notes)
     if query_notes_base:
-        all_notes_in_perfume = top | heart | base
-        base_hit_count = len(set(query_notes_base) & all_notes_in_perfume)
+        all_notes = top | heart | base
+        base_hit = len(set(query_notes_base) & all_notes)
         base_total = len(set(query_notes_base))
-
         if base_total > 0:
-            coverage = base_hit_count / base_total
-
-            # bonus tiers (tweakable)
+            coverage = base_hit / base_total
             if coverage == 1.0:
-                score += 2.0   # perfect
+                score += 2.0
             elif coverage >= 0.8:
-                score += 1.0   # almost perfect
+                score += 1.0
 
-    return score, matched, top | heart | base
-
-def standardize_external_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df.columns = [str(c).strip() for c in df.columns]
-
-    rename_map = {}
-    for c in df.columns:
-        lc = str(c).strip().lower()
-        if lc in ["perfume", "perfume name", "name", "fragrance", "parfum"]:
-            rename_map[c] = "Perfume"
-        elif lc in ["brand", "house", "designer", "maker"]:
-            rename_map[c] = "Brand"
-        elif lc in ["top", "top notes", "head notes"]:
-            rename_map[c] = "Top Notes"
-        elif lc in ["heart", "middle", "middle notes", "mid notes"]:
-            rename_map[c] = "Heart Notes"
-        elif lc in ["base", "base notes"]:
-            rename_map[c] = "Base Notes"
-        elif lc in ["all notes", "notes", "notes (all)", "all"]:
-            rename_map[c] = "All Notes"
-        elif lc in ["olfactory family", "family", "accords"]:
-            rename_map[c] = "Olfactory Family"
-        elif lc in ["gender", "sex"]:
-            rename_map[c] = "Gender"
-
-    df = df.rename(columns=rename_map)
-
-    for col in EXPECTED_EXTERNAL_COLS:
-        if col not in df.columns:
-            df[col] = ""
-
-    return df[EXPECTED_EXTERNAL_COLS]
+    return score, matched
 
 # ---------- Load data ----------
 @st.cache_data
@@ -268,27 +207,14 @@ except Exception:
     st.stop()
 
 import traceback
-
 try:
     external, external_ws = load_external_from_sheets()
- #  st.success(f"Loaded external perfumes from Google Sheets: {len(external)} rows")
 except Exception:
     st.error("Could not load external perfumes from Google Sheets (full error below):")
     st.code(traceback.format_exc())
     external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
     external_ws = None
 
-def compute_max_score(query_top, query_heart, query_base, query_notes_base):
-    # pyramid mode
-    if query_top or query_heart or query_base:
-        return (
-            2.0 * len(query_top) +
-            1.6 * len(query_heart) +
-            1.4 * len(query_base)
-        )
-
-    # notes-only mode
-    return 1.6 * len(query_notes_base)
 # ---------- UI ----------
 st.title("Find your Chogan Perfume")
 
@@ -330,32 +256,19 @@ with right:
         """
     )
 
-    # A container that will always render on the RIGHT
+    # This is where direct hits will appear (RIGHT side, under the score info)
     direct_matches_box = st.container()
 
     # ---- Build query notes from typed notes ----
     raw = split_notes(notes_text)
-    query_notes_base = set(normalize_note(n) for n in raw)      # denominator
-    query_notes_match = expand_query_notes(raw)                 # matching
+    query_notes_base = set(normalize_note(n) for n in raw)   # denominator
+    query_notes_match = expand_query_notes(raw)              # matching
 
     query_top, query_heart, query_base = set(), set(), set()
-
-    # We will compute direct hits (Chogan inspiration matches) here,
-    # but render them only inside direct_matches_box below.
     direct_hits = chogan.iloc[0:0]
 
     # ---- If searching by perfume name ----
     if mode == "By perfume name" and perfume_name.strip():
-        search = perfume_name.strip().lower()
-        insp_text = str(row.get("Inspiration", "")).lower()
-    
-        similarity = SequenceMatcher(None, search, insp_text).ratio()
-
-        if similarity > 0.8:
-            sc += 5.0   # almost exact perfume match
-        elif similarity > 0.6:
-            sc += 3.0   # strong similarity
-
         # A) Direct hits in Chogan inspirations
         direct_hits = find_chogan_direct_matches(chogan, perfume_name)
 
@@ -364,7 +277,7 @@ with right:
                 direct_hits["Inspiration"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
             ]
 
-        # B) Pull notes from external DB (so we can still do note-based matching)
+        # B) Pull notes from external DB (to fuel note-based recommendations)
         mask = external["Perfume"].fillna("").str.lower().str.contains(perfume_name.strip().lower(), na=False)
         matches = external[mask]
 
@@ -391,7 +304,7 @@ with right:
             if len(direct_hits) == 0:
                 st.warning("No saved notes found and no direct Chogan inspiration match. Try a different name or add it below.")
 
-    # ✅ Render direct matches ON THE RIGHT (below the score info)
+    # ✅ Render direct hits ON THE RIGHT
     with direct_matches_box:
         if len(direct_hits) > 0:
             st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
@@ -435,49 +348,45 @@ with right:
         elif gender_choice == "Men or Unisex (M/U)":
             filtered = filtered[g.isin(["M", "U"])]
 
-    # ✅ If we already have direct hits, DO NOT show the same Chogan inspiration again as a low-score recommendation
+    # ✅ Remove direct-hit inspirations from recommendations (prevents duplicate Coco Mademoiselle)
     if len(direct_hits) > 0 and "Inspiration" in filtered.columns:
         direct_insp = set(direct_hits["Inspiration"].fillna("").astype(str).str.lower())
         filtered = filtered[~filtered["Inspiration"].fillna("").astype(str).str.lower().isin(direct_insp)]
 
-    # ---- Score and rank ----
+    # ---- Score & rank recommendations ----
     if not query_notes_base:
-        st.write("Enter notes or select a saved perfume below to get recommendations.")
+        st.write("Enter notes (or select a saved perfume) to get recommendations.")
     else:
-        results = []
-        for _, row in filtered.iterrows():
-            sc, matched, _ = weighted_score(
-                query_notes_match,
-                row,
-                query_top,
-                query_heart,
-                query_base,
-                query_notes_base=query_notes_base,
-            )
-
-            # Fuzzy inspiration name boost
-            if mode == "By perfume name" and perfume_name.strip():
-                from difflib import SequenceMatcher
-
-                search = perfume_name.strip().lower()
-                insp_text = str(row.get("Inspiration", "")).lower()
-        
-                similarity = SequenceMatcher(None, search, insp_text).ratio()
-        
-                if similarity > 0.8:
-                    sc += 5.0
-                elif similarity > 0.6:
-                    sc += 3.0
-
-    results.append((sc, matched, row))
-            results.append((sc, matched, row))
-
-        results.sort(key=lambda x: x[0], reverse=True)
-
         max_score = compute_max_score(query_top, query_heart, query_base, query_notes_base)
         if max_score <= 0:
-            st.warning("Add some notes to get recommendations.")
+            st.write("Enter notes (or select a saved perfume) to get recommendations.")
         else:
+            results = []
+            for _, row in filtered.iterrows():
+                sc, matched = weighted_score(
+                    query_notes_match,
+                    row,
+                    query_top,
+                    query_heart,
+                    query_base,
+                    query_notes_base=query_notes_base,
+                )
+
+                # Fuzzy inspiration name boost (makes name searches feel smarter)
+                if mode == "By perfume name" and perfume_name.strip():
+                    search = perfume_name.strip().lower()
+                    insp_text = str(row.get("Inspiration", "")).lower()
+                    similarity = SequenceMatcher(None, search, insp_text).ratio()
+                    if similarity > 0.8:
+                        sc += 5.0
+                    elif similarity > 0.6:
+                        sc += 3.0
+
+                results.append((sc, matched, row))
+
+            results.sort(key=lambda x: x[0], reverse=True)
+
+            # Only show >= 3/10
             good_matches = [r for r in results if (r[0] / max_score) * 10 >= 3][:top_n]
 
             if not good_matches:
@@ -554,6 +463,6 @@ if submitted:
         upsert_external_to_sheets(external_ws, new_row)
         st.success("Saved (updated if already existed).")
         st.rerun()
-        
+
 with st.expander("View saved external perfumes"):
     st.dataframe(external.tail(50))
