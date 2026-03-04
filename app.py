@@ -318,6 +318,7 @@ with left:
 
 with right:
     st.subheader("My Recommendations")
+    direct_matches_box = st.container()
 
     st.info(
     """
@@ -439,7 +440,7 @@ if mode == "By perfume name" and perfume_name.strip():
                 query_base,
                 query_notes_base=query_notes_base,
             )
-
+            
                 # ✅ Perfect inspiration boost (string match)
             if mode == "By perfume name" and perfume_name.strip():
                 insp_text = str(row.get("Inspiration", "")).lower()
