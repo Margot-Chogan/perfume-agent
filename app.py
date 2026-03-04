@@ -195,19 +195,25 @@ with right:
         results.append((sc, matched, row))
 
     results.sort(key=lambda x: x[0], reverse=True)
+
+    # Slice first, then remove zero-score results
+    top_results = results[:top_n]
     top_results = [r for r in top_results if r[0] > 0]
 
-if not top_results:
-    st.warning("No close matches found. Try more specific notes (e.g., 'cedar', 'blackcurrant', 'vanilla') or remove one note.")
-else:
-    # render results loop
-
+    # If no query notes, guide the user
     if not query_notes:
         st.write("Enter notes (or select a saved external perfume) to get recommendations.")
+
+    # If they did enter notes but nothing matched, show warning
+    elif not top_results:
+        st.warning(
+            "No close matches found. Try more specific notes (e.g., 'cedar', 'blackcurrant', 'vanilla') or remove one note."
+        )
+
+    # Otherwise, render the results
     else:
         for rank, (sc, matched, row) in enumerate(top_results, start=1):
-            # Try multiple possible column names for the reference
-            ref = row.get("Perfume ref.") or row.get("Reference") or row.get("Code") or row.get("ID") or ""
+            ref = row.get("Perfume reference") or row.get("Reference") or row.get("Code") or row.get("ID") or ""
             insp = row.get("Inspiration", "")
             fam = row.get("Olfactory Family", "")
             top = row.get("Top Notes", "")
