@@ -10,11 +10,6 @@ def get_gs_client():
     raw = st.secrets["gcp_service_account"]["raw_json"]
     creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
     
-    st.write("DEBUG client_email:", creds_info.get("client_email"))
-    st.write("DEBUG private_key length:", len(creds_info.get("private_key","")))
-    st.write("DEBUG private_key starts:", creds_info.get("private_key","")[:30])
-    st.write("DEBUG private_key ends:", creds_info.get("private_key","")[-30:])
-    
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
