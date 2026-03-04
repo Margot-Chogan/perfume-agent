@@ -366,31 +366,31 @@ else:
     for rank, (sc, matched, row) in enumerate(good_matches, start=1):
         score_10 = (sc / max_score) * 10
         # render as normal
-                ref = (
-                    row.get("Perfume reference")
-                    or row.get("Perfume ref.")
-                    or row.get("Reference")
-                    or row.get("Code")
-                    or row.get("ID")
-                    or ""
+        ref = (
+            row.get("Perfume reference")
+            or row.get("Perfume ref.")
+            or row.get("Reference")
+            or row.get("Code")
+            or row.get("ID")
+            or ""
                 )
 
-                insp = row.get("Inspiration", "")
-                fam = row.get("Olfactory Family", "")
-                top = row.get("Top Notes", "")
-                heart = row.get("Heart Notes", "")
-                base = row.get("Base Notes", "")
+        insp = row.get("Inspiration", "")
+        fam = row.get("Olfactory Family", "")
+        top = row.get("Top Notes", "")
+        heart = row.get("Heart Notes", "")
+        base = row.get("Base Notes", "")
 
-                st.markdown(f"### #{rank} — **{ref}**")
-                st.write(f"Inspiration: *{insp}*")
-                st.write(f"Family: *{fam}*")
-                score_10 = (sc / max_score) * 10
-                st.write(f"**Match score:** {score_10:.2f} / 10")
-                st.write(f"**Matched notes:** {', '.join(sorted(matched)) if matched else 'None'}")
-                st.write(f"Top: {top}")
-                st.write(f"Heart: {heart}")
-                st.write(f"Base: {base}")
-                st.divider()
+        st.markdown(f"### #{rank} — **{ref}**")
+        st.write(f"Inspiration: *{insp}*")
+        st.write(f"Family: *{fam}*")
+        score_10 = (sc / max_score) * 10
+        st.write(f"**Match score:** {score_10:.2f} / 10")
+        st.write(f"**Matched notes:** {', '.join(sorted(matched)) if matched else 'None'}")
+        st.write(f"Top: {top}")
+        st.write(f"Heart: {heart}")
+        st.write(f"Base: {base}")
+        st.divider()
 
 # ---------- Add / Update External Perfume ----------
 st.subheader("Add / Update an External (non-Chogan) Perfume (manual entry)")
