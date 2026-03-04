@@ -279,26 +279,38 @@ left, right = st.columns([1, 2])
 
 with left:
     st.subheader("Search Mode")
-    mode = st.radio("Choose input type:", ["By perfume name", "By notes only"])
 
-    perfume_name = ""
-    brand_name = ""
+    # ✅ Search only happens when the button is clicked
+    with st.form("search_form"):
+        mode = st.radio("Choose input type:", ["By perfume name", "By notes only"])
 
-    if mode == "By perfume name":
-        perfume_name = st.text_input("Perfume name (e.g., Nina)")
-        brand_name = st.text_input("Brand (optional, e.g., Nina Ricci)")
+        perfume_name = ""
+        brand_name = ""
 
-    notes_text = st.text_input("Desired notes (comma-separated)", placeholder="e.g., jasmine, lavender, woody")
+        if mode == "By perfume name":
+            perfume_name = st.text_input("Perfume name (e.g., Nina)")
+            brand_name = st.text_input("Brand (optional, e.g., Nina Ricci)")
 
-    st.subheader("Filters (optional)")
-    family_filter = st.text_input("Olfactory family contains", placeholder="e.g., floral, oriental, woody")
+        notes_text = st.text_input(
+            "Desired notes (comma-separated)",
+            placeholder="e.g., jasmine, lavender, woody",
+        )
 
-    gender_choice = st.selectbox(
-        "Gender preference",
-        ["Any", "Women (F)", "Men (M)", "Unisex (U)", "Women or Unisex (F/U)", "Men or Unisex (M/U)"],
-    )
+        st.subheader("Filters (optional)")
+        family_filter = st.text_input(
+            "Olfactory family contains",
+            placeholder="e.g., floral, oriental, woody",
+        )
 
-    top_n = st.slider("How many recommendations?", 1, 5, 3)
+        gender_choice = st.selectbox(
+            "Gender preference",
+            ["Any", "Women (F)", "Men (M)", "Unisex (U)", "Women or Unisex (F/U)", "Men or Unisex (M/U)"],
+        )
+
+        top_n = st.slider("How many recommendations?", 1, 5, 3)
+
+        # ✅ The only trigger for searching
+        search_clicked = st.form_submit_button("Search")
 
 with right:
     st.subheader("My Recommendations")
@@ -312,6 +324,9 @@ with right:
         - **3.0–4.9** → Quite different, but some similar notes
         """
     )
+if not search_clicked:
+    st.info("Click **Search** to run recommendations.")
+    st.stop()
 
     # This is where direct hits will appear (RIGHT side, under the score info)
     direct_matches_box = st.container()
@@ -489,7 +504,7 @@ with right:
 # ---------- Add / Update External Perfume ----------
 st.subheader("Add / Update an External Perfume (manual entry)")
 
-with st.form("add_external"):
+with st.form("add_external", clear_on_submit=True):
     c1, c2 = st.columns(2)
 
     with c1:
