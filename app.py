@@ -39,6 +39,7 @@ def weighted_score(query_notes, row):
     top = set(normalize_note(n) for n in split_notes(row.get("Top Notes", "")))
     heart = set(normalize_note(n) for n in split_notes(row.get("Heart Notes", "")))
     base = set(normalize_note(n) for n in split_notes(row.get("Base Notes", "")))
+    all_notes = set(normalize_note(n) for n in split_notes(row.get("All Notes", "")))
 
     score = 0.0
     matched = set()
@@ -53,11 +54,14 @@ def weighted_score(query_notes, row):
         elif n in base:
             score += 1.3
             matched.add(n)
+       elif n in all_notes:
+            score += 1.1  # unknown layer, medium weight
+            matched.add(n)     
 
     # bonus if all requested notes are present somewhere
-    all_notes = top | heart | base
-    if query_notes and query_notes.issubset(all_notes):
-        score += 2.0
+    all_combined = top | heart | base | all_notes
+    if query_notes and query_notes.issubset(all_combined):
+    score += 2.0
 
     return score, matched, all_notes
 
