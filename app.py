@@ -344,7 +344,7 @@ with right:
 
     # Score and rank
     if not query_notes:
-        st.write("Enter notes (or select a saved external perfume) to get recommendations.")
+        st.write("Enter notes or select a saved perfume below to get recommendations.")
     else:
         results = []
         for _, row in filtered.iterrows():
