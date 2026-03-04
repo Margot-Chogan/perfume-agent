@@ -99,14 +99,20 @@ def weighted_score(query_notes, row):
 
 # ---------- Load data ----------
 @st.cache_data
-def load_csv(path):
+def load_chogan_csv(path):
+    return pd.read_csv(path)
+
+def load_external_csv(path):
+    # DO NOT cache this one; it changes when you add perfumes
     return pd.read_csv(path)
 
 try:
-    chogan = load_csv("chogan_catalog.csv")
-except Exception as e:
-    st.error("Could not load chogan_catalog.csv. Make sure it is in the repo.")
-    st.stop()
+    chogan = load_chogan_csv("chogan_catalog.csv")
+try:
+    external = load_external_csv("external_perfumes.csv")
+    external = standardize_external_columns(external)
+except Exception:
+    external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
 
 EXPECTED_EXTERNAL_COLS = ["Perfume", "Brand", "Top Notes", "Heart Notes", "Base Notes", "All Notes", "Olfactory Family"]
 
@@ -310,3 +316,5 @@ if submitted:
 
         external.to_csv("external_perfumes.csv", index=False)
         st.success("Saved! (Note: on Streamlit Cloud, you’ll want to store this in Google Sheets or a small database—see next step.)")
+        st.rerun()
+        
