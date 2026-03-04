@@ -112,7 +112,7 @@ with left:
     ["Any", "Women (F)", "Men (M)", "Unisex (U)", "Women or Unisex (F/U)", "Men or Unisex (M/U)"]
 )
 
-    top_n = st.slider("How many results?", 3, 15, 7)
+    top_n = st.slider("How many results?", 1, 3, 5)
 
 with right:
     st.subheader("Recommendations")
