@@ -361,7 +361,7 @@ with right:
             filtered = filtered[g.isin(["M", "U"])]
 
     # Score and rank
-    if not query_notes:
+    if not query_notes_base:
         st.write("Enter notes or select a saved perfume below to get recommendations.")
     else:
         results = []
