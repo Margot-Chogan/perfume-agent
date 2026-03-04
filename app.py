@@ -6,7 +6,7 @@ from google.oauth2.service_account import Credentials
 
 st.set_page_config(page_title="Find your Chogan Perfume", layout="wide")
 
-# ---------- Helpers ----------
+# ---------- Helpers ---------- 
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
         return []
