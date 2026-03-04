@@ -226,7 +226,6 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
                 score += 1.0
 
     # -------- Accord / pillar bonus --------
-    all_notes = top | heart | base
     perfume_pillars = detect_pillars(all_notes)
 
     if query_notes_base:
