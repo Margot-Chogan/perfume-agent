@@ -134,7 +134,7 @@ with left:
     st.subheader("Filters (optional)")
     family_filter = st.text_input("Olfactory family contains", placeholder="e.g., floral, oriental, woody")
     gender_choice = st.selectbox(
-    "Gender p",
+    "Gender preference",
     ["Any", "Women (F)", "Men (M)", "Unisex (U)", "Women or Unisex (F/U)", "Men or Unisex (M/U)"]
 )
 
