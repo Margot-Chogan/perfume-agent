@@ -8,6 +8,8 @@ from google.oauth2.service_account import Credentials
 @st.cache_resource
 def get_gs_client():
     creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
+    st.write("Client email:", creds_info.get("client_email"))
+    st.write("Private key length:", len(creds_info.get("private_key","")))
     scopes = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
