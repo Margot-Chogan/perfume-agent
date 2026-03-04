@@ -215,10 +215,14 @@ except Exception:
     st.error("Could not load chogan_catalog.csv. Make sure it is in your repo.")
     st.stop()
 
+import traceback
+
 try:
     external, external_ws = load_external_from_sheets()
-except Exception as e:
-    st.error(f"Could not load external perfumes from Google Sheets: {e}")
+    st.success(f"Loaded external perfumes from Google Sheets: {len(external)} rows")
+except Exception:
+    st.error("Could not load external perfumes from Google Sheets (full error below):")
+    st.code(traceback.format_exc())
     external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
     external_ws = None
     
