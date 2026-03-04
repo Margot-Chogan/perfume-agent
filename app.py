@@ -190,10 +190,16 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
                 matched.add(n)
 
     def compute_max_score(query_top, query_heart, query_base, query_notes_base):
-    # If pyramid notes exist, denominator should be based on those sets
+
+    # pyramid search
     if query_top or query_heart or query_base:
-        return (2.0 * len(query_top)) + (1.6 * len(query_heart)) + (1.4 * len(query_base))
-    # Otherwise notes-only mode
+        return (
+            2.0 * len(query_top)
+            + 1.6 * len(query_heart)
+            + 1.4 * len(query_base)
+        )
+
+    # notes-only search
     return 1.6 * len(query_notes_base)
     
     # ---------------- Perfect match boost ----------------
