@@ -7,13 +7,14 @@ import unicodedata
 from google.oauth2.service_account import Credentials
 from difflib import SequenceMatcher
 
-# ✅ MUST be before any other Streamlit UI calls
+# =========================================================
+# PAGE CONFIG (must be before any other Streamlit calls)
+# =========================================================
 st.set_page_config(page_title="Find your Chogan Perfume", layout="wide")
 
 # =========================================================
 # CONFIG
 # =========================================================
-
 EXPECTED_EXTERNAL_COLS = [
     "Perfume",
     "Brand",
@@ -25,30 +26,24 @@ EXPECTED_EXTERNAL_COLS = [
     "Olfactory Family",
 ]
 
-# Scoring blend
-NOTE_WEIGHT = 0.70
-VIBE_WEIGHT = 0.30
+# Scoring blend (final 0..10)
+NOTE_WEIGHT = 0.72
+VIBE_WEIGHT = 0.28
 
-# ✅ Reduce inflation vs previous version
-DNA_BOOST = 0.4          # was 0.7
-ANCHOR_DIVISOR = 15.0    # was 10 (weaker anchor nudges)
-
+# Extra bump when pillars overlap strongly (kept small so scores don’t skyrocket)
+DNA_BOOST = 0.35  # adds 0.35/10
 MIN_SCORE_TO_SHOW = 3.0
 
 # Threshold to show "Exact match" candidates for name search
 EXACT_MATCH_SIM_THRESHOLD = 0.74  # tweakable (0.70–0.80)
 
-# Precision/Recall blend for note scoring
-# recall = "how many of my notes did you match?"
-# precision = "how much of your perfume is actually relevant?"
-NOTE_RECALL_WEIGHT = 0.70
-NOTE_PRECISION_WEIGHT = 0.30
-
+# Precision/Recall balancing (penalize missing + “too many extra notes”)
+# F-beta: beta < 1 => precision matters more (penalizes extra notes more)
+F_BETA = 0.85
 
 # =========================================================
 # GOOGLE SHEETS
 # =========================================================
-
 @st.cache_resource
 def get_gs_client():
     creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
@@ -74,21 +69,28 @@ def ensure_external_headers(ws):
         ws.append_row(EXPECTED_EXTERNAL_COLS)
 
 
-def load_external_from_sheets():
+@st.cache_data(ttl=300)  # cache reads for 5 minutes to reduce quota pressure
+def load_external_from_sheets_cached():
     ws = get_external_worksheet()
     ensure_external_headers(ws)
-
     records = ws.get_all_records()
     df = pd.DataFrame(records)
-
     for col in EXPECTED_EXTERNAL_COLS:
         if col not in df.columns:
             df[col] = ""
+    return df[EXPECTED_EXTERNAL_COLS]
 
-    return df[EXPECTED_EXTERNAL_COLS], ws
+
+def load_external_from_sheets():
+    # wrapper that returns both df + ws handle
+    ws = get_external_worksheet()
+    ensure_external_headers(ws)
+    df = load_external_from_sheets_cached()
+    return df, ws
 
 
 def upsert_external_to_sheets(ws, row_dict):
+    # always re-open to avoid stale handles
     ws = get_external_worksheet()
     ensure_external_headers(ws)
 
@@ -112,11 +114,13 @@ def upsert_external_to_sheets(ws, row_dict):
     else:
         ws.append_row(values)
 
+    # bust read-cache after writes
+    load_external_from_sheets_cached.clear()
+
 
 # =========================================================
 # TEXT NORMALIZATION
 # =========================================================
-
 def strip_accents(s: str) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     return "".join(c for c in s if not unicodedata.combining(c))
@@ -143,41 +147,57 @@ def name_similarity(a: str, b: str) -> float:
 # =========================================================
 # NOTES NORMALIZATION + “SMART” NOTE MATCHING
 # =========================================================
-
 NOTE_DESCRIPTORS = {
     "absolute", "essence", "accord", "note", "notes", "extract", "resinoid",
-    "madagascan", "madagascar", "bourbon", "damask", "damascena",
+    "madagascan", "madagascar", "bourbon", "damask", "damascena", "honeyed",
     "african", "calabrian", "white", "black", "red", "pink", "green",
     "rich", "deep", "leathery", "soft", "warm", "fresh",
-    # Keep these for pillars, but don’t let them erase the whole note:
-    "woody", "woods",
+    "wood", "woody", "woods",
+    "noire", "noir", "intense", "eau", "de", "parfum", "edp",
 }
 
 NOTE_SYNONYMS = {
+    # vanilla
     "vanille": "vanilla",
     "bourbon vanilla": "vanilla",
     "bourbon vanilla absolute": "vanilla",
     "vanilla absolute": "vanilla",
     "vanilla orchid": "vanilla",
 
+    # orange blossom / neroli family
     "african orange blossom": "orange blossom",
-    "orange blossom absolute": "orange blossom",
-    "orange blossom essence": "orange blossom",
+    "orange blossom": "orange blossom",
+    "fleur d oranger": "orange blossom",
+    "orange flower": "orange blossom",
 
-    "white musk": "musk",
-    "cedarwood": "cedar",
-
+    # woods / oud
     "oud wood": "oud",
     "oud wood accord": "oud",
     "oud accord": "oud",
     "agarwood": "oud",
+
+    # musks
+    "white musk": "musk",
+
+    # cedars
+    "cedarwood": "cedar",
+
+    # amber woods (help pillars + matching)
+    "amberwood": "amber wood",
+    "amber wood": "amber wood",
+
+    # common spelling variants
+    "black currant": "blackcurrant",
+    "cassís": "cassis",
 }
+
 
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
         return []
     parts = re.split(r"[,/;]+", str(x))
     return [p.strip() for p in parts if p.strip()]
+
 
 def normalize_note(note: str) -> str:
     raw = strip_accents(str(note)).lower()
@@ -186,6 +206,7 @@ def normalize_note(note: str) -> str:
     if not raw:
         return ""
 
+    # direct mapping (whole phrase)
     if raw in NOTE_SYNONYMS:
         return NOTE_SYNONYMS[raw]
 
@@ -200,6 +221,7 @@ def normalize_note(note: str) -> str:
 
     return cleaned
 
+
 def normalize_notes_list(lst):
     out = []
     for x in lst:
@@ -208,6 +230,7 @@ def normalize_notes_list(lst):
             out.append(n)
     return out
 
+
 def notes_match(a: str, b: str) -> bool:
     a = normalize_note(a)
     b = normalize_note(b)
@@ -215,7 +238,9 @@ def notes_match(a: str, b: str) -> bool:
         return False
     if a == b:
         return True
+    # phrase containment for nuanced variants (e.g. “african orange blossom”)
     return (a in b) or (b in a)
+
 
 def set_intersection_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
     matched = set()
@@ -225,6 +250,7 @@ def set_intersection_smart(query_notes_set: set[str], perfume_notes_set: set[str
                 matched.add(q)
                 break
     return matched
+
 
 def set_missing_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
     missing = set()
@@ -239,46 +265,57 @@ def set_missing_smart(query_notes_set: set[str], perfume_notes_set: set[str]) ->
     return missing
 
 
+def set_extra_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
+    # “extra” candidate notes that don’t match the query
+    extra = set()
+    for p in perfume_notes_set:
+        ok = False
+        for q in query_notes_set:
+            if notes_match(q, p):
+                ok = True
+                break
+        if not ok:
+            extra.add(p)
+    return extra
+
+
 # =========================================================
 # PILLARS (VIBE / ACCORDS)
 # =========================================================
-
-# ✅ Citrussy accord created + made less “everything matches”
-# (We keep more distinctive citrus signals, not ultra-common "orange/lemon")
 PILLARS = {
+    # Fruits (non-citrus)
     "fruity": {
         "pear", "raspberry", "strawberry", "lychee", "blackcurrant", "currant",
-        "peach", "plum", "apple", "mango",
+        "peach", "plum", "apple", "mango", "pineapple", "cassis",
     },
+
+    # Citrus accord
     "citrussy": {
-        "bergamot", "grapefruit", "lime", "yuzu", "citron", "pomelo",
-        "blood orange", "orange zest", "lemon zest",
+        "bergamot", "lemon", "lime", "orange", "mandarin", "tangerine",
+        "grapefruit", "pomelo", "yuzu", "citron", "blood orange",
+        "orange zest", "lemon zest", "citrus", "citric",
         "neroli", "petitgrain",
-        "citrus",
     },
+
     "floral": {
         "rose", "black rose", "jasmine", "tuberose", "orange blossom", "peony",
-        "datura", "iris", "violet", "orchid",
+        "datura", "iris", "violet", "orchid", "lily of the valley",
     },
+
     "gourmand": {
         "vanilla", "praline", "caramel", "coffee", "tonka", "chocolate",
-        "benzoin", "toffee", "cocoa", "honey",
+        "benzoin", "toffee", "cocoa", "honey", "sugar", "marshmallow",
     },
-    "woody": {
-        "patchouli", "cedar", "cedarwood", "sandalwood", "vetiver",
-    "moss", "oakmoss", "papyrus", "oud",
 
-    # ✅ modern woods / woody accords (needed for By the Fireplace etc.)
-    "guaiac", "guaiac wood",
-    "cashmeran",
-    "iso e super", "iso e",   # optional but useful if you ever store it
-    "amberwood",
-    "dry wood", "woody accord", "wood accord",
-    "smoke", "smoky",         # optional, often used with woods
-    "juniper",                # woody-aromatic
+    # Expanded woody so “woody” isn’t missed
+    "woody": {
+        "patchouli", "cedar", "sandalwood", "vetiver", "moss", "oakmoss",
+        "papyrus", "oud", "cashmeran", "guaiac", "guaiac wood", "amber wood",
+        "amberwood", "cedarwood", "dry woods", "woods",
     },
-    "musky": {"musk", "ambroxan", "ambergris"},
-    "resinous": {"incense", "labdanum", "amber", "myrrh", "opoponax"},
+
+    "musky": {"musk", "ambroxan", "ambergris", "ambrox"},
+    "resinous": {"incense", "labdanum", "amber", "myrrh", "opoponax", "resin"},
 }
 
 ANCHOR_COMBOS = [
@@ -286,18 +323,18 @@ ANCHOR_COMBOS = [
     ({"vanilla", "patchouli"}, 0.6),
     ({"coffee", "vanilla"}, 0.8),
     ({"praline", "vanilla"}, 0.7),
+    ({"neroli", "orange blossom"}, 0.5),
 ]
+
 
 def detect_pillars(notes_set: set[str]) -> set[str]:
     found = set()
-    notes_blob = " ".join(sorted(notes_set))
     for pillar, kws in PILLARS.items():
-        for kw in kws:
-            if kw in notes_set or kw in notes_blob:
-                found.add(pillar)
-                break
+        if notes_set & kws:
+            found.add(pillar)
     return found
-    
+
+
 def penalties(query_pillars: set[str], perfume_pillars: set[str]) -> float:
     pen = 0.0
     if "gourmand" in query_pillars and "gourmand" not in perfume_pillars:
@@ -306,9 +343,8 @@ def penalties(query_pillars: set[str], perfume_pillars: set[str]) -> float:
 
 
 # =========================================================
-# SCORING (PYRAMID + VIBE) WITH PRECISION+RECALL
+# SCORING (PYRAMID + VIBE) with missing + extra note penalties
 # =========================================================
-
 def get_row_note_sets(row):
     top = set(normalize_notes_list(split_notes(row.get("Top Notes", ""))))
     heart = set(normalize_notes_list(split_notes(row.get("Heart Notes", ""))))
@@ -316,87 +352,143 @@ def get_row_note_sets(row):
     all_notes = top | heart | base
     return top, heart, base, all_notes
 
-def pyramid_weights_for_sets(top: set[str], heart: set[str], base: set[str]) -> float:
-    # same weights as your pyramid scoring
-    return (2.0 * len(top)) + (1.6 * len(heart)) + (1.4 * len(base))
 
-def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart, perf_base):
+def fbeta(precision: float, recall: float, beta: float) -> float:
+    if precision <= 0 and recall <= 0:
+        return 0.0
+    b2 = beta * beta
+    denom = (b2 * precision) + recall
+    if denom <= 0:
+        return 0.0
+    return (1 + b2) * (precision * recall) / denom
+
+
+def score_notes_simple(query_notes: set[str], perfume_notes: set[str]) -> tuple[float, set[str], set[str], set[str]]:
     """
-    Pyramid-aware overlap using smart note matching.
     Returns:
-      recall-like score in [0..1] + weighted_match for precision computation.
+      note_score in [0..1],
+      matched query notes,
+      missing query notes,
+      extra candidate notes
+    """
+    if not query_notes:
+        return 0.0, set(), set(), set()
+
+    matched = set_intersection_smart(query_notes, perfume_notes)
+    missing = set_missing_smart(query_notes, perfume_notes)
+    extra = set_extra_smart(query_notes, perfume_notes)
+
+    recall = len(matched) / max(len(query_notes), 1)
+    precision = len(matched) / max(len(perfume_notes), 1)
+
+    # F-beta reduces score when there are many “extra” notes
+    note_score = fbeta(precision, recall, F_BETA)
+    return note_score, matched, missing, extra
+
+
+def score_notes_pyramid(
+    query_top: set[str],
+    query_heart: set[str],
+    query_base: set[str],
+    perf_top: set[str],
+    perf_heart: set[str],
+    perf_base: set[str],
+) -> tuple[float, set[str], set[str], set[str]]:
+    """
+    Pyramid-aware overlap with smart matching.
+    Produces an F-beta style score in [0..1] that accounts for:
+      - missing query notes (recall)
+      - extra perfume notes (precision)
     """
     q_top = set(query_top)
     q_heart = set(query_heart)
     q_base = set(query_base)
 
-    denom = (2.0 * len(q_top)) + (1.6 * len(q_heart)) + (1.4 * len(q_base))
-    if denom <= 0:
-        return 0.0, 0.0
+    # weighted denominators
+    denom_q = (2.0 * len(q_top)) + (1.6 * len(q_heart)) + (1.4 * len(q_base))
+    denom_p = (2.0 * len(perf_top)) + (1.6 * len(perf_heart)) + (1.4 * len(perf_base))
 
-    s = 0.0
+    if denom_q <= 0:
+        return 0.0, set(), set(), set()
 
+    # compute matched weight
+    matched_weight = 0.0
+    matched_notes = set()
+
+    def any_match(n: str, s: set[str]) -> bool:
+        return any(notes_match(n, p) for p in s)
+
+    # Top queries
     for n in q_top:
-        if any(notes_match(n, p) for p in perf_top):
-            s += 2.0
-        elif any(notes_match(n, p) for p in perf_heart):
-            s += 1.2
-        elif any(notes_match(n, p) for p in perf_base):
-            s += 0.8
+        if any_match(n, perf_top):
+            matched_weight += 2.0
+            matched_notes.add(n)
+        elif any_match(n, perf_heart):
+            matched_weight += 1.2
+            matched_notes.add(n)
+        elif any_match(n, perf_base):
+            matched_weight += 0.8
+            matched_notes.add(n)
 
+    # Heart queries
     for n in q_heart:
-        if any(notes_match(n, p) for p in perf_heart):
-            s += 1.6
-        elif any(notes_match(n, p) for p in perf_top):
-            s += 1.2
-        elif any(notes_match(n, p) for p in perf_base):
-            s += 1.0
+        if any_match(n, perf_heart):
+            matched_weight += 1.6
+            matched_notes.add(n)
+        elif any_match(n, perf_top):
+            matched_weight += 1.2
+            matched_notes.add(n)
+        elif any_match(n, perf_base):
+            matched_weight += 1.0
+            matched_notes.add(n)
 
+    # Base queries
     for n in q_base:
-        if any(notes_match(n, p) for p in perf_base):
-            s += 1.4
-        elif any(notes_match(n, p) for p in perf_heart):
-            s += 1.1
+        if any_match(n, perf_base):
+            matched_weight += 1.4
+            matched_notes.add(n)
+        elif any_match(n, perf_heart):
+            matched_weight += 1.1
+            matched_notes.add(n)
 
-    recall_like = max(min(s / denom, 1.0), 0.0)
-    return recall_like, s
+    # recall/precision (weighted)
+    recall = matched_weight / max(denom_q, 1e-9)
+    precision = matched_weight / max(denom_p, 1e-9) if denom_p > 0 else 0.0
 
-def score_notes_simple(query_notes: set[str], perfume_notes: set[str]) -> tuple[float, int]:
-    """
-    Returns (recall_like, matched_count)
-    """
-    if not query_notes:
-        return 0.0, 0
-    matched = set_intersection_smart(query_notes, perfume_notes)
-    recall_like = len(matched) / max(len(query_notes), 1)
-    return recall_like, len(matched)
+    note_score = fbeta(precision, recall, F_BETA)
 
-def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_heart=None, query_base=None):
+    query_all = q_top | q_heart | q_base
+    perf_all = perf_top | perf_heart | perf_base
+
+    missing = set_missing_smart(query_all, perf_all)
+    extra = set_extra_smart(query_all, perf_all)
+
+    return max(min(note_score, 1.0), 0.0), matched_notes, missing, extra
+
+
+def score_perfume(
+    query_notes: set[str],
+    row,
+    used_pyramid: bool = False,
+    query_top: set[str] | None = None,
+    query_heart: set[str] | None = None,
+    query_base: set[str] | None = None,
+):
     perf_top, perf_heart, perf_base, perf_all = get_row_note_sets(row)
 
-    # NOTE SCORE (0..1) using both recall + precision
+    query_top = query_top or set()
+    query_heart = query_heart or set()
+    query_base = query_base or set()
+
+    # NOTE SCORE (0..1) + matched/missing/extra (for UI)
     if used_pyramid and (query_top or query_heart or query_base):
-        recall_like, weighted_match = score_notes_pyramid(
+        note_score, matched_qnotes, missing_qnotes, extra_pnotes = score_notes_pyramid(
             query_top, query_heart, query_base, perf_top, perf_heart, perf_base
         )
-
-        perf_weight_total = pyramid_weights_for_sets(perf_top, perf_heart, perf_base)
-        precision_like = (weighted_match / perf_weight_total) if perf_weight_total > 0 else 0.0
-
-        note_score = (NOTE_RECALL_WEIGHT * recall_like) + (NOTE_PRECISION_WEIGHT * precision_like)
-
         q_all_for_vibe = set(query_top) | set(query_heart) | set(query_base)
-        query_all_for_missing = set(query_top) | set(query_heart) | set(query_base)
     else:
-        recall_like, matched_count = score_notes_simple(query_notes, perf_all)
-        precision_like = matched_count / max(len(perf_all), 1) if perf_all else 0.0
-
-        note_score = (NOTE_RECALL_WEIGHT * recall_like) + (NOTE_PRECISION_WEIGHT * precision_like)
-
+        note_score, matched_qnotes, missing_qnotes, extra_pnotes = score_notes_simple(query_notes, perf_all)
         q_all_for_vibe = set(query_notes)
-        query_all_for_missing = set(query_notes)
-
-    note_score = max(min(note_score, 1.0), 0.0)
 
     # VIBE SCORE (0..1)
     query_pillars = detect_pillars(q_all_for_vibe)
@@ -407,33 +499,35 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 
     blended = NOTE_WEIGHT * note_score + VIBE_WEIGHT * vibe_score
 
-    # Anchors (weaker than before)
+    # Anchors (small nudges)
     for combo, b in ANCHOR_COMBOS:
         if combo <= q_all_for_vibe and combo <= perf_all:
-            blended += b / ANCHOR_DIVISOR
+            blended += b / 10.0
 
     blended += penalties(query_pillars, perfume_pillars) / 10.0
 
-    # DNA boost if vibe overlap strong (reduced)
+    # Small “same DNA” bump
     if pillar_overlap >= 3:
         blended += DNA_BOOST / 10.0
 
     score10 = max(min(blended * 10.0, 10.0), 0.0)
 
-    matched_notes = sorted(set_intersection_smart(query_all_for_missing, perf_all))
-    missing_notes = sorted(set_missing_smart(query_all_for_missing, perf_all))
+    matched_notes = sorted(matched_qnotes)
+    missing_notes = sorted(missing_qnotes)
+    # show a few “extra notes” (otherwise it can be huge)
+    extra_notes = sorted(list(extra_pnotes))[:10]
     matched_pillars = sorted(query_pillars & perfume_pillars)
 
-    return score10, matched_notes, matched_pillars, missing_notes
+    return score10, matched_notes, matched_pillars, missing_notes, extra_notes
 
 
 # =========================================================
 # DATA LOAD
 # =========================================================
-
 @st.cache_data
 def load_chogan_csv(path):
     return pd.read_csv(path)
+
 
 try:
     chogan = load_chogan_csv("chogan_catalog.csv")
@@ -441,46 +535,117 @@ except Exception:
     st.error("Could not load chogan_catalog.csv. Make sure it is in your repo.")
     st.stop()
 
+external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
+external_ws = None
 try:
     external, external_ws = load_external_from_sheets()
 except Exception as e:
-    st.error(f"Could not load external perfumes from Google Sheets: {e}")
-    external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
-    external_ws = None
+    # Don’t crash the app; search should still work
+    st.warning(f"Could not load external perfumes from Google Sheets: {e}")
 
 
 # =========================================================
-# UI HELPERS
+# UI HELPERS (score colors + labels)
 # =========================================================
-
 def score_badge(score: float):
     if score >= 7.0:
         return ("Excellent match", "#16a34a", "white")  # green
     if score >= 5.0:
-        return ("Good match", "#60a5fa", "white")       # light blue
+        return ("Good match", "#60a5fa", "white")  # light blue
     if score >= 3.0:
-        return ("Worth a try", "#fde68a", "#111827")    # light yellow
-    return ("Low match", "#e5e7eb", "#111827")          # gray
+        return ("Worth a try", "#fde68a", "#111827")  # light yellow
+    return ("Low match", "#e5e7eb", "#111827")
+
 
 def score_scale_card():
     st.markdown(
         """
-<div style="border:1px solid #e5e7eb; border-radius:12px; padding:12px; background:#fff;">
-  <div style="font-weight:600; margin-bottom:8px;">How to read the match score</div>
-  <div style="display:flex; gap:8px; flex-wrap:wrap;">
-    <span style="background:#16a34a; color:#fff; padding:6px 10px; border-radius:999px; font-weight:600; font-size:0.9rem;">7.0–10.0 — Excellent match</span>
-    <span style="background:#60a5fa; color:#fff; padding:6px 10px; border-radius:999px; font-weight:600; font-size:0.9rem;">5.0–6.9 — Good match</span>
-    <span style="background:#fde68a; color:#111827; padding:6px 10px; border-radius:999px; font-weight:600; font-size:0.9rem;">3.0–4.9 — Worth a try</span>
+<div class="score-scale-card">
+  <div class="score-scale-title">How to read the match score</div>
+  <div class="score-scale-row">
+    <span class="pill pill-green">7.0–10.0 — Excellent match</span>
+    <span class="pill pill-blue">5.0–6.9 — Good match</span>
+    <span class="pill pill-yellow">3.0–4.9 — Worth a try</span>
   </div>
 </div>
         """,
         unsafe_allow_html=True,
     )
 
+
+def inject_css():
+    st.markdown(
+        """
+<style>
+/* General */
+.score-scale-card{
+  border:1px solid rgba(148,163,184,0.35);
+  border-radius:14px;
+  padding:12px;
+  background: rgba(255,255,255,0.04);
+  margin-bottom: 12px;
+}
+.score-scale-title{font-weight:700;margin-bottom:8px;}
+.score-scale-row{display:flex;gap:8px;flex-wrap:wrap;}
+.pill{padding:6px 10px;border-radius:999px;font-weight:700;font-size:0.90rem;display:inline-block}
+.pill-green{background:#16a34a;color:#fff}
+.pill-blue{background:#60a5fa;color:#fff}
+.pill-yellow{background:#fde68a;color:#111827}
+
+/* Score card (desktop + mobile responsive) */
+.score-card{
+  border:1px solid rgba(148,163,184,0.35);
+  border-radius:14px;
+  padding:12px 14px;
+  background: rgba(255,255,255,0.04);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.score-main{
+  font-weight:900;
+  font-size:1.15rem;
+}
+.score-badge{
+  padding:7px 12px;
+  border-radius:999px;
+  font-weight:800;
+  font-size:0.92rem;
+  white-space:nowrap;
+}
+.meta-line{margin-top:6px;margin-bottom:2px;}
+.missing-line{color:#9ca3af;font-style:italic;margin-top:6px;}
+.extra-line{color:#9ca3af;font-style:italic;margin-top:2px;}
+
+/* Mobile improvements */
+@media (max-width: 768px){
+  .score-card{
+    flex-direction:column;
+    align-items:flex-start;
+    padding:14px 14px;
+  }
+  .score-main{
+    font-size:1.35rem;   /* bigger & readable on mobile */
+    line-height:1.15;
+  }
+  .score-badge{
+    align-self:flex-start;
+    font-size:1.00rem;
+    padding:8px 14px;
+  }
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+inject_css()
+
 # =========================================================
 # SESSION STATE
 # =========================================================
-
 if "has_searched" not in st.session_state:
     st.session_state.has_searched = False
 
@@ -491,11 +656,9 @@ def reset_search():
     st.session_state.has_searched = False
     st.session_state.last_query = {}
 
-
 # =========================================================
 # APP
 # =========================================================
-
 st.title("Find your Chogan Perfume")
 
 tab_search, tab_add = st.tabs(["Search", "Add a new perfume to the database"])
@@ -503,7 +666,6 @@ tab_search, tab_add = st.tabs(["Search", "Add a new perfume to the database"])
 # =========================================================
 # TAB 1: SEARCH
 # =========================================================
-
 with tab_search:
     left, right = st.columns([1, 2], gap="large")
 
@@ -520,7 +682,10 @@ with tab_search:
             brand_name = st.text_input("Brand (optional)")
             notes_text = st.text_input("Desired notes (comma-separated)")
         else:
-            notes_text = st.text_input("Desired notes (comma-separated)", placeholder="e.g., jasmine, vanilla, patchouli")
+            notes_text = st.text_input(
+                "Desired notes (comma-separated)",
+                placeholder="e.g., jasmine, vanilla, patchouli",
+            )
 
         gender_choice = st.selectbox(
             "Gender preference (optional)",
@@ -556,7 +721,7 @@ with tab_search:
     with right:
         st.subheader("My Recommendations")
 
-        # Score scale card always visible on desktop right column
+        # Always show the score scale key at the top of the recommendations area
         score_scale_card()
 
         if not st.session_state.has_searched:
@@ -570,46 +735,49 @@ with tab_search:
             gender_choice = qd.get("gender_choice", "Any")
             top_n = int(qd.get("top_n", 3))
 
-            # 1) Build query notes
+            # -------------------------------------------------
+            # 1) Query notes from user notes text
+            # -------------------------------------------------
             raw_notes = normalize_notes_list(split_notes(notes_text))
             query_notes = set(raw_notes)
 
             used_pyramid = False
             query_top, query_heart, query_base = set(), set(), set()
 
-            # 2) Exact matches by similarity (shows BOTH Good Girl etc.)
+            # -------------------------------------------------
+            # 2) "Exact match" candidates in Chogan inspirations (similarity)
+            # -------------------------------------------------
             exact_hits = chogan.iloc[0:0]
+            exact_hit_rows = []
+
             if mode == "By perfume name" and perfume_name.strip():
                 qname = perfume_name.strip()
-                hit_rows = []
-                q_norm = norm_text(qname)
 
                 for idx, row in chogan.iterrows():
-                    insp = str(row.get("Inspiration", ""))
+                    insp = str(row.get("Inspiration", "")).strip()
                     if not insp:
                         continue
-                    insp_norm = norm_text(insp)
 
                     sim = name_similarity(qname, insp)
 
                     if brand_name.strip():
                         b = norm_text(brand_name)
-                        if b and b in insp_norm:
+                        if b and b in norm_text(insp):
                             sim += 0.06
 
-                    # Token containment: avoids “Good Girl” being hijacked by a longer string
-                    contains = q_norm in insp_norm
+                    contains = norm_text(qname) in norm_text(insp)
 
                     if sim >= EXACT_MATCH_SIM_THRESHOLD or contains:
-                        hit_rows.append((sim, idx))
+                        exact_hit_rows.append((sim, idx))
 
-                hit_rows.sort(key=lambda x: x[0], reverse=True)
-                exact_idxs = [idx for _, idx in hit_rows[:10]]
+                exact_hit_rows.sort(key=lambda x: x[0], reverse=True)
+                exact_idxs = [idx for _, idx in exact_hit_rows[:10]]
                 if exact_idxs:
                     exact_hits = chogan.loc[exact_idxs].copy()
 
             if len(exact_hits) > 0:
                 st.success(f"Exact match found in Chogan inspirations ({len(exact_hits)} result(s)).")
+
                 for _, hit in exact_hits.head(top_n).iterrows():
                     ref = (
                         hit.get("Perfume reference")
@@ -626,8 +794,11 @@ with tab_search:
                     st.write(f"Base: {hit.get('Base Notes','')}")
                     st.divider()
 
-            # 3) External DB notes
-            if mode == "By perfume name" and perfume_name.strip() and not external.empty:
+            # -------------------------------------------------
+            # 3) External DB notes (power recommendations for external perfumes)
+            # -------------------------------------------------
+            used_external = None
+            if mode == "By perfume name" and perfume_name.strip() and (external is not None) and (not external.empty):
                 mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
                 matches = external[mask]
 
@@ -653,7 +824,9 @@ with tab_search:
 
                     st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
 
-            # 4) If still no notes, seed from first exact match
+            # -------------------------------------------------
+            # 4) If still no notes, seed from first exact match notes
+            # -------------------------------------------------
             if (not query_notes) and len(exact_hits) > 0:
                 seed = exact_hits.iloc[0].to_dict()
                 st.info("Using the exact match notes to generate recommendations.")
@@ -670,8 +843,11 @@ with tab_search:
                     query_notes |= set(normalize_notes_list(split_notes(seed.get("All Notes", ""))))
                     used_pyramid = False
 
-            # 5) Gender filter
+            # -------------------------------------------------
+            # 5) Apply robust gender filter
+            # -------------------------------------------------
             filtered = chogan.copy()
+
             if "Gender" in filtered.columns:
                 g_raw = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
 
@@ -705,10 +881,13 @@ with tab_search:
                     filtered = filtered[g.isin(["M", "U", "M/U"])]
                 # Any -> no filter
 
-            # 6) Recommendations
+            # -------------------------------------------------
+            # 6) Score & show recommendations
+            # -------------------------------------------------
             if not query_notes and not used_pyramid:
                 st.warning("Add some notes, or search a perfume name that exists in your external database.")
             else:
+                # Avoid duplicating exact-hit refs in the recommendations list
                 exact_refs = set()
                 if len(exact_hits) > 0:
                     for _, hit in exact_hits.iterrows():
@@ -735,7 +914,7 @@ with tab_search:
                     if str(ref).strip().lower() in exact_refs:
                         continue
 
-                    score, matched_notes, matched_pillars, missing_notes = score_perfume(
+                    score, matched_notes, matched_pillars, missing_notes, extra_notes = score_perfume(
                         query_notes=query_notes,
                         row=row,
                         used_pyramid=used_pyramid,
@@ -744,19 +923,20 @@ with tab_search:
                         query_base=query_base,
                     )
 
+                    # Optional slight name similarity boost (kept small)
                     if mode == "By perfume name" and perfume_name.strip():
                         sim = name_similarity(perfume_name, str(row.get("Inspiration", "")))
-                        if sim > 0.85:
-                            score = min(score + 1.0, 10.0)
-                        elif sim > 0.70:
-                            score = min(score + 0.5, 10.0)
+                        if sim > 0.88:
+                            score = min(score + 0.6, 10.0)
+                        elif sim > 0.75:
+                            score = min(score + 0.3, 10.0)
 
-                    results.append((score, matched_notes, matched_pillars, missing_notes, row))
+                    results.append((score, matched_notes, matched_pillars, missing_notes, extra_notes, row))
 
                 results.sort(key=lambda x: x[0], reverse=True)
 
                 shown = 0
-                for score, matched_notes, matched_pillars, missing_notes, row in results:
+                for score, matched_notes, matched_pillars, missing_notes, extra_notes, row in results:
                     if score < MIN_SCORE_TO_SHOW:
                         continue
 
@@ -773,14 +953,13 @@ with tab_search:
                     st.markdown(f"### #{shown} — **{ref}**")
                     st.write(f"Inspiration: *{row.get('Inspiration','')}*")
 
+                    # Score card (mobile-friendly)
                     label, bg, fg = score_badge(score)
                     st.markdown(
                         f"""
-<div style="border:1px solid #e5e7eb; border-radius:12px; padding:12px 14px; background:#fff; display:flex; align-items:center; justify-content:space-between;">
-  <div style="font-size:1.25rem; font-weight:900;">Match score: {score:.2f} / 10</div>
-  <div style="background:{bg}; color:{fg}; padding:6px 12px; border-radius:999px; font-weight:700; font-size:0.9rem;">
-    {label}
-  </div>
+<div class="score-card">
+  <div class="score-main">Match score: {score:.2f} / 10</div>
+  <div class="score-badge" style="background:{bg}; color:{fg};">{label}</div>
 </div>
                         """,
                         unsafe_allow_html=True,
@@ -788,7 +967,7 @@ with tab_search:
 
                     notes_txt = ", ".join(matched_notes) if matched_notes else "None"
                     accords_txt = ", ".join(matched_pillars) if matched_pillars else "None"
-                    st.write(f"**Matched notes:** {notes_txt}  |  **Matched accords:** {accords_txt}")
+                    st.markdown(f"<div class='meta-line'><b>Matched notes:</b> {notes_txt} &nbsp;&nbsp;|&nbsp;&nbsp; <b>Matched accords:</b> {accords_txt}</div>", unsafe_allow_html=True)
 
                     st.write(f"Top: {row.get('Top Notes','')}")
                     st.write(f"Heart: {row.get('Heart Notes','')}")
@@ -796,10 +975,12 @@ with tab_search:
 
                     if missing_notes:
                         miss_txt = ", ".join(missing_notes)
-                        st.markdown(
-                            f"<div style='color:#9ca3af; font-style:italic; margin-top:6px;'>Missing notes: {miss_txt}</div>",
-                            unsafe_allow_html=True,
-                        )
+                        st.markdown(f"<div class='missing-line'>Missing notes: {miss_txt}</div>", unsafe_allow_html=True)
+
+                    # “Extra notes” indicator (kept subtle; helps avoid inflated scores)
+                    if extra_notes:
+                        extra_txt = ", ".join(extra_notes)
+                        st.markdown(f"<div class='extra-line'>Other notes present: {extra_txt}{'…' if len(extra_notes)==10 else ''}</div>", unsafe_allow_html=True)
 
                     st.divider()
 
@@ -812,11 +993,9 @@ with tab_search:
                         "Would you like to try something else?"
                     )
 
-
 # =========================================================
 # TAB 2: ADD EXTERNAL PERFUME
 # =========================================================
-
 with tab_add:
     st.subheader("Add a new perfume to the database")
 
@@ -839,7 +1018,7 @@ with tab_add:
         if not new_perfume.strip():
             st.error("Perfume name required.")
         elif external_ws is None:
-            st.error("Google Sheets not connected. Fix the error above first.")
+            st.error("Google Sheets not connected (or quota exceeded). Try again in a minute.")
         else:
             row_dict = {
                 "Perfume": new_perfume.strip(),
@@ -849,14 +1028,15 @@ with tab_add:
                 "Heart Notes": new_heart.strip(),
                 "Base Notes": new_base.strip(),
                 "All Notes": new_all.strip(),
-                "Olfactory Family": "",
+                "Olfactory Family": "",  # not used anymore
             }
             upsert_external_to_sheets(external_ws, row_dict)
             st.success("Saved.")
             st.rerun()
 
+    # show cached list (won’t hammer the API)
     try:
-        external_latest, _ = load_external_from_sheets()
+        external_latest = load_external_from_sheets_cached()
     except Exception:
         external_latest = external
 
