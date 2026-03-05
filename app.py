@@ -32,6 +32,86 @@ DNA_BOOST = 0.7
 MIN_SCORE_TO_SHOW = 3.0
 
 # =========================================================
+# NOTE CANONICALIZATION (fixes orange blossom vs african orange blossom etc.)
+# =========================================================
+NOTE_CANONICAL = {
+    # Orange blossom / neroli family
+    "african orange blossom": "orange blossom",
+    "orange blossom absolute": "orange blossom",
+    "orange blossom essence": "orange blossom",
+    "orange flower": "orange blossom",
+    "orange-flower": "orange blossom",
+    "fleur d oranger": "orange blossom",
+    "fleur d'oranger": "orange blossom",
+    "neroli": "neroli",  # keep neroli distinct; still lets orange blossom match orange blossom
+
+    # Common qualifier variants
+    "white musk": "musk",
+    "clean musk": "musk",
+    "musks": "musk",
+
+    "cedarwood": "cedar",
+    "atlas cedar": "cedar",
+    "virginia cedar": "cedar",
+
+    "calabrian bergamot": "bergamot",
+    "italian bergamot": "bergamot",
+
+    "jasmine sambac": "jasmine",
+    "chinese jasmine": "jasmine",
+    "egyptian jasmine": "jasmine",
+
+    "black rose": "rose",
+    "black rose essence": "rose",
+
+    # Sometimes written as "vanilla orchid"
+    "vanilla orchid": "orchid",
+    "vanilla orchid absolute": "orchid",
+}
+
+def canonicalize_note(note: str) -> str:
+    """
+    Turns note variants into a canonical note.
+    Strategy:
+      - exact map hits
+      - remove common regional/modifier adjectives if they appear at the start
+    """
+    n = str(note).strip().lower()
+    if not n:
+        return ""
+
+    # direct mapping
+    if n in NOTE_CANONICAL:
+        return NOTE_CANONICAL[n]
+
+    # remove accents and cleanup punctuation
+    n = unicodedata.normalize("NFKD", n)
+    n = "".join(c for c in n if not unicodedata.combining(c))
+    n = re.sub(r"[^a-z0-9\s]", " ", n)
+    n = re.sub(r"\s+", " ", n).strip()
+
+    # map again after cleanup
+    if n in NOTE_CANONICAL:
+        return NOTE_CANONICAL[n]
+
+    # strip common leading modifiers (keeps meaning but increases matching)
+    leading_mods = [
+        "african", "italian", "calabrian", "egyptian", "moroccan",
+        "white", "black", "red", "pink", "wild",
+        "absolute", "essence", "extract",
+    ]
+    parts = n.split()
+    while parts and parts[0] in leading_mods and len(parts) >= 2:
+        parts = parts[1:]
+    n2 = " ".join(parts).strip()
+
+    # final map after stripping modifiers
+    if n2 in NOTE_CANONICAL:
+        return NOTE_CANONICAL[n2]
+
+    return n2
+
+# =========================================================
 # GOOGLE SHEETS
 # =========================================================
 @st.cache_resource
@@ -122,26 +202,13 @@ def name_similarity(a, b):
 
 
 def extract_perfume_name_from_inspiration(insp: str) -> str:
-    """
-    Inspiration strings often look like:
-    "Good Girl - Carolina Herrera"
-    "Good Girl Gone Bad – Kilian"
-    We take the left side as the perfume name.
-    """
     s = str(insp or "")
-    # split on common separators
     parts = re.split(r"\s[-–—]\s", s, maxsplit=1)
     left = parts[0] if parts else s
     return left.strip()
 
 
 def find_inspiration_matches(chogan_df: pd.DataFrame, perfume_query: str, brand_query: str = ""):
-    """
-    Returns two dataframes:
-      - exact_hits: perfume name (left side of Inspiration) == query (normalized)
-      - also_hits: word-boundary contains OR high similarity (useful for "Good Girl Gone Bad")
-    Brand query is optional; if provided, it narrows results.
-    """
     if chogan_df.empty or "Inspiration" not in chogan_df.columns:
         return chogan_df.iloc[0:0], chogan_df.iloc[0:0]
 
@@ -154,7 +221,6 @@ def find_inspiration_matches(chogan_df: pd.DataFrame, perfume_query: str, brand_
     exact_rows = []
     also_rows = []
 
-    # word boundary regex for safer "contains"
     pat = re.compile(rf"\b{re.escape(q)}\b", re.IGNORECASE)
 
     for idx, row in chogan_df.iterrows():
@@ -171,14 +237,12 @@ def find_inspiration_matches(chogan_df: pd.DataFrame, perfume_query: str, brand_
             exact_rows.append(idx)
             continue
 
-        # "also matches": word-boundary contains in the perfume-name part OR high similarity
         if pat.search(left_norm) or name_similarity(q, left_norm) >= 0.78:
             also_rows.append(idx)
 
     exact_hits = chogan_df.loc[exact_rows] if exact_rows else chogan_df.iloc[0:0]
     also_hits = chogan_df.loc[also_rows] if also_rows else chogan_df.iloc[0:0]
 
-    # avoid duplicates between exact and also
     if not exact_hits.empty and not also_hits.empty:
         also_hits = also_hits[~also_hits.index.isin(exact_hits.index)]
 
@@ -195,7 +259,8 @@ def split_notes(x):
 
 
 def normalize_note(n):
-    return strip_accents(str(n).strip().lower())
+    # ✅ now canonicalized
+    return canonicalize_note(n)
 
 
 def normalize_notes_list(lst):
@@ -209,10 +274,10 @@ PILLARS = {
         "pear","raspberry","strawberry","lychee","blackcurrant","currant","peach","plum",
         "apple","mango","orange","mandarin","tangerine","bergamot","lemon"
     },
-    "floral": {"rose","black rose","jasmine","tuberose","orange blossom","peony","datura","iris","violet","orchid"},
+    "floral": {"rose","jasmine","tuberose","orange blossom","peony","datura","iris","violet","orchid","neroli"},
     "gourmand": {"vanilla","praline","caramel","coffee","tonka","chocolate","benzoin","toffee","cocoa"},
-    "woody": {"patchouli","cedar","cedarwood","sandalwood","vetiver","moss","oakmoss","papyrus"},
-    "musky": {"musk","white musk","ambroxan","ambergris"},
+    "woody": {"patchouli","cedar","sandalwood","vetiver","moss","oakmoss","papyrus"},
+    "musky": {"musk","ambroxan","ambergris"},
     "resinous": {"incense","labdanum","amber","myrrh"},
 }
 
@@ -343,11 +408,11 @@ def score_label(score_10: float) -> str:
 
 def score_badge_bg(score_10: float) -> str:
     if score_10 >= 7.0:
-        return "#16a34a"  # green
+        return "#16a34a"
     if score_10 >= 5.0:
-        return "#60a5fa"  # light blue
+        return "#60a5fa"
     if score_10 >= 3.0:
-        return "#fde68a"  # light yellow
+        return "#fde68a"
     return "#9ca3af"
 
 
@@ -485,13 +550,12 @@ with tab_search:
             if mode == "By perfume name" and perfume_name.strip():
                 exact_hits, also_hits = find_inspiration_matches(chogan, perfume_name, brand_name)
 
-            # === EXACT MATCH AREA (NOW SHOWS BOTH GROUPS) ===
             if len(exact_hits) > 0 or len(also_hits) > 0:
                 total = len(exact_hits) + len(also_hits)
                 st.success(f"Matches found in Chogan inspirations ({total} result(s)).")
 
                 if len(exact_hits) > 0:
-                    for rank, (_, hit) in enumerate(exact_hits.head(top_n).iterrows(), start=1):
+                    for _, hit in exact_hits.head(top_n).iterrows():
                         ref = (
                             hit.get("Perfume reference")
                             or hit.get("Perfume ref.")
@@ -509,7 +573,7 @@ with tab_search:
 
                 if len(also_hits) > 0:
                     st.info("Also matches (similar name):")
-                    for rank, (_, hit) in enumerate(also_hits.head(top_n).iterrows(), start=1):
+                    for _, hit in also_hits.head(top_n).iterrows():
                         ref = (
                             hit.get("Perfume reference")
                             or hit.get("Perfume ref.")
@@ -525,11 +589,7 @@ with tab_search:
                         st.write(f"Base: {hit.get('Base Notes','')}")
                         st.divider()
 
-            # Prefer the best seed:
-            # 1) external notes
-            # 2) exact hit notes
-            # 3) also hit notes
-            used_external = None
+            # External seed
             if mode == "By perfume name" and perfume_name.strip() and not external.empty:
                 mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
                 matches = external[mask]
@@ -555,6 +615,7 @@ with tab_search:
 
                     st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
 
+            # seed from best hit
             if (not query_notes) and (len(exact_hits) > 0 or len(also_hits) > 0):
                 seed_row = exact_hits.iloc[0].to_dict() if len(exact_hits) > 0 else also_hits.iloc[0].to_dict()
                 st.info("Using the best match notes to generate recommendations.")
@@ -609,7 +670,6 @@ with tab_search:
             if not query_notes and not used_pyramid:
                 st.warning("Add some notes, or search a perfume name that exists in your external database.")
             else:
-                # Avoid duplicating exact-hit refs in recommendations list
                 direct_refs = set()
                 for df_hits in [exact_hits, also_hits]:
                     if len(df_hits) > 0:
@@ -686,14 +746,10 @@ with tab_search:
                         break
 
                 if shown == 0:
-                    st.warning(
-                        "Sorry, we don't have a good match for the notes in the perfume you are looking for. "
-                        "Would you like to try something else?"
-                    )
+                    st.warning("Sorry, we don't have a good match for the notes in the perfume you are looking for.")
 
 with tab_add:
     st.subheader("Add / Update an External Perfume (manual entry)")
-
     with st.form("add_external", clear_on_submit=True):
         c1, c2 = st.columns(2)
 
