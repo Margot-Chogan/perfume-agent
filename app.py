@@ -5,6 +5,7 @@ import json
 import gspread
 from google.oauth2.service_account import Credentials
 from difflib import SequenceMatcher
+import traceback
 
 # =========================================================
 # CONFIG
@@ -39,7 +40,6 @@ EXPAND_KEYWORDS = {
     "musk": ["musk", "ambergris"],
 }
 
-# -------- Accord / pillar detection (simple + tweakable) --------
 PILLARS = {
     "fruity": {
         "pear","raspberry","strawberry","lychee","blackcurrant","currant","peach","plum","apple",
@@ -61,7 +61,6 @@ PILLARS = {
     "spicy": {"pepper","pink pepper","cinnamon","cardamom","clove","saffron"},
     "sweet": {"vanilla","praline","caramel","honey","sugar","tonka","benzoin"},
 }
-
 
 # =========================================================
 # GOOGLE SHEETS
@@ -103,7 +102,6 @@ def load_external_from_sheets():
     return df[EXPECTED_EXTERNAL_COLS], ws
 
 def upsert_external_to_sheets(row_dict):
-    # always re-open worksheet fresh to avoid stale handles
     ws = get_external_worksheet()
     ensure_external_headers(ws)
 
@@ -113,7 +111,7 @@ def upsert_external_to_sheets(row_dict):
     key_brand = row_dict.get("Brand", "").strip().lower()
 
     target_row = None
-    for i, r in enumerate(records, start=2):  # data starts at row 2
+    for i, r in enumerate(records, start=2):
         p = str(r.get("Perfume", "")).strip().lower()
         b = str(r.get("Brand", "")).strip().lower()
         if p == key_perfume and b == key_brand:
@@ -126,7 +124,6 @@ def upsert_external_to_sheets(row_dict):
         ws.update(f"A{target_row}:H{target_row}", [values])
     else:
         ws.append_row(values)
-
 
 # =========================================================
 # HELPERS / SCORING
@@ -161,7 +158,6 @@ def expand_query_notes(raw_notes_list):
     return expanded
 
 def detect_pillars(notes_set) -> set[str]:
-    # substring-based detection so "white musk" triggers "musky" even if notes_set contains "white musk"
     blob = " | ".join(sorted(str(n) for n in notes_set))
     found = set()
     for pillar, kws in PILLARS.items():
@@ -172,10 +168,6 @@ def detect_pillars(notes_set) -> set[str]:
     return found
 
 def compute_max_score(query_top, query_heart, query_base, query_notes_base, used_pyramid: bool) -> float:
-    """
-    used_pyramid=True  -> denominator based on the pyramid sets (Top/Heart/Base)
-    used_pyramid=False -> denominator based on the notes-only query (query_notes_base)
-    """
     if used_pyramid:
         return (
             2.0 * len(query_top) +
@@ -246,21 +238,17 @@ def weighted_score(query_notes_match, row, query_top=None, query_heart=None, que
         query_pillars = detect_pillars(set(query_notes_base))
         overlap = perfume_pillars & query_pillars
 
-        # anchor
         if ("patchouli" in all_notes) and ("patchouli" in set(query_notes_base)):
             score += 0.6
 
-        # overlap bonus
         score += 0.6 * len(overlap)
 
-        # synergy
         if {"fruity", "woody"} <= overlap:
             score += 0.8
         if {"fruity", "gourmand"} <= overlap:
             score += 0.6
 
     return score, matched
-
 
 # =========================================================
 # LOAD DATA
@@ -276,22 +264,26 @@ except Exception:
     st.error("Could not load chogan_catalog.csv. Make sure it is in your repo.")
     st.stop()
 
-import traceback
 try:
-    external, _external_ws = load_external_from_sheets()
+    external, _ = load_external_from_sheets()
 except Exception:
     st.error("Could not load external perfumes from Google Sheets (full error below):")
     st.code(traceback.format_exc())
     external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
 
-
 # =========================================================
-# UI STATE (so Enter doesn't trigger actions)
+# SESSION STATE
 # =========================================================
 
 if "run_search" not in st.session_state:
     st.session_state.run_search = False
 
+# key suffix for manual entry widgets (lets us clear safely)
+if "entry_key_v" not in st.session_state:
+    st.session_state.entry_key_v = 0
+
+def bump_entry_keys():
+    st.session_state.entry_key_v += 1
 
 # =========================================================
 # UI
@@ -337,8 +329,7 @@ with left:
     def _do_search():
         st.session_state.run_search = True
 
-    st.button("Search", on_click=_do_search, use_container_width=False)
-
+    st.button("Search", on_click=_do_search)
 
 # ---------------- RIGHT: RESULTS ----------------
 with right:
@@ -359,20 +350,15 @@ with right:
     if not st.session_state.run_search:
         st.info("Click **Search** to run recommendations.")
     else:
-        # ---- Build query notes from typed notes ----
         raw = split_notes(notes_text)
-        query_notes_base = set(normalize_note(n) for n in raw)   # denominator
-        query_notes_match = expand_query_notes(raw)              # matching
+        query_notes_base = set(normalize_note(n) for n in raw)
+        query_notes_match = expand_query_notes(raw)
 
         query_top, query_heart, query_base = set(), set(), set()
+        used_pyramid_query = False
         direct_hits = chogan.iloc[0:0]
 
-        # Track whether we actually have a pyramid query (affects denominator)
-        used_pyramid_query = False
-
-        # ---- If searching by perfume name ----
         if mode == "By perfume name" and perfume_name.strip():
-            # A) Direct hits in Chogan inspirations
             direct_hits = find_chogan_direct_matches(chogan, perfume_name)
 
             if brand_name.strip() and len(direct_hits) > 1:
@@ -380,7 +366,6 @@ with right:
                     direct_hits["Inspiration"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
                 ]
 
-            # B) Pull notes from external DB (to fuel note-based recommendations)
             mask = external["Perfume"].fillna("").str.lower().str.contains(perfume_name.strip().lower(), na=False)
             matches = external[mask]
 
@@ -399,7 +384,6 @@ with right:
                 used_pyramid_query = bool(ext_notes)
 
                 if not ext_notes:
-                    # fallback if pyramid not provided
                     ext_notes = set(normalize_note(n) for n in split_notes(used_external.get("All Notes", "")))
                     used_pyramid_query = False
 
@@ -411,7 +395,7 @@ with right:
                 if len(direct_hits) == 0:
                     st.warning("No saved notes found and no direct Chogan inspiration match. Try a different name or add it below.")
 
-        # ✅ Render direct hits (RIGHT)
+        # Direct hits on RIGHT
         with direct_matches_box:
             if len(direct_hits) > 0:
                 st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
@@ -434,7 +418,7 @@ with right:
                     st.write(f"Base: {hit.get('Base Notes','')}")
                     st.divider()
 
-        # ---- Apply filters to Chogan catalog ----
+        # Filters
         filtered = chogan.copy()
 
         if family_filter.strip() and "Olfactory Family" in filtered.columns:
@@ -455,12 +439,12 @@ with right:
             elif gender_choice == "Men or Unisex (M/U)":
                 filtered = filtered[g.isin(["M", "U"])]
 
-        # ✅ Remove direct-hit inspirations from recommendations (prevents duplicate Coco Mademoiselle)
+        # Remove direct-hit inspirations from recommendations
         if len(direct_hits) > 0 and "Inspiration" in filtered.columns:
             direct_insp = set(direct_hits["Inspiration"].fillna("").astype(str).str.lower())
             filtered = filtered[~filtered["Inspiration"].fillna("").astype(str).str.lower().isin(direct_insp)]
 
-        # ---- Score & rank recommendations ----
+        # Score
         if not query_notes_base:
             st.write("Enter notes (or select a saved perfume) to get recommendations.")
         else:
@@ -479,7 +463,6 @@ with right:
                         query_notes_base=query_notes_base,
                     )
 
-                    # Fuzzy inspiration name boost
                     if mode == "By perfume name" and perfume_name.strip():
                         search = perfume_name.strip().lower()
                         insp_text = str(row.get("Inspiration", "")).lower()
@@ -529,27 +512,28 @@ with right:
                         st.write(f"Base: {base}")
                         st.divider()
 
-
 # =========================================================
-# ADD / UPDATE EXTERNAL PERFUME (NO FORM -> Enter WON'T SAVE)
+# MANUAL ENTRY (Enter should NOT save)
 # =========================================================
 
 st.subheader("Add / Update an External Perfume (manual entry)")
 
+v = st.session_state.entry_key_v  # suffix
+
 c1, c2 = st.columns(2)
 with c1:
-    new_perfume = st.text_input("Perfume", key="new_perfume")
-    new_brand = st.text_input("Brand", key="new_brand")
-    new_family = st.text_input("Olfactory Family (optional)", key="new_family")
-    new_gender = st.selectbox("Gender (optional)", ["", "F", "M", "U"], key="new_gender")
+    new_perfume = st.text_input("Perfume", key=f"new_perfume_{v}")
+    new_brand = st.text_input("Brand", key=f"new_brand_{v}")
+    new_family = st.text_input("Olfactory Family (optional)", key=f"new_family_{v}")
+    new_gender = st.selectbox("Gender (optional)", ["", "F", "M", "U"], key=f"new_gender_{v}")
 
 with c2:
-    new_top = st.text_input("Top Notes (comma-separated)", key="new_top")
-    new_heart = st.text_input("Heart Notes (comma-separated)", key="new_heart")
-    new_base = st.text_input("Base Notes (comma-separated)", key="new_base")
-    new_all = st.text_input("All Notes (comma-separated) — use if no pyramid", key="new_all")
+    new_top = st.text_input("Top Notes (comma-separated)", key=f"new_top_{v}")
+    new_heart = st.text_input("Heart Notes (comma-separated)", key=f"new_heart_{v}")
+    new_base = st.text_input("Base Notes (comma-separated)", key=f"new_base_{v}")
+    new_all = st.text_input("All Notes (comma-separated) — use if no pyramid", key=f"new_all_{v}")
 
-save_clicked = st.button("Save external perfume")
+save_clicked = st.button("Save external perfume", key=f"save_btn_{v}")
 
 if save_clicked:
     if not str(new_perfume).strip():
@@ -569,11 +553,7 @@ if save_clicked:
             upsert_external_to_sheets(new_row)
             st.success("Saved (updated if already existed).")
 
-            # clear inputs manually
-            for k in ["new_perfume","new_brand","new_family","new_gender","new_top","new_heart","new_base","new_all"]:
-                if k in st.session_state:
-                    st.session_state[k] = "" if k != "new_gender" else ""
-
+            bump_entry_keys()  # safely clears inputs by changing keys
             st.rerun()
         except Exception:
             st.error("Could not save to Google Sheets (details below):")
