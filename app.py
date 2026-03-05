@@ -73,7 +73,6 @@ def load_external_from_sheets():
 
 
 def upsert_external_to_sheets(ws, row_dict):
-
     ws = get_external_worksheet()
     ensure_external_headers(ws)
 
@@ -83,11 +82,9 @@ def upsert_external_to_sheets(ws, row_dict):
     key_brand = row_dict.get("Brand", "").strip().lower()
 
     target_row = None
-
     for i, r in enumerate(records, start=2):
         p = str(r.get("Perfume", "")).strip().lower()
         b = str(r.get("Brand", "")).strip().lower()
-
         if p == key_perfume and b == key_brand:
             target_row = i
             break
@@ -110,24 +107,19 @@ def strip_accents(s):
 
 
 def norm_text(s):
-
     s = strip_accents(s).lower()
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s)
-
     return s.strip()
 
 
 def name_similarity(a, b):
-
     a = norm_text(a)
     b = norm_text(b)
 
     fuzz = SequenceMatcher(None, a, b).ratio()
-
     ta = set(a.split())
     tb = set(b.split())
-
     jac = len(ta & tb) / len(ta | tb) if (ta or tb) else 0
 
     return (fuzz + jac) / 2
@@ -138,19 +130,14 @@ def name_similarity(a, b):
 # =========================================================
 
 def split_notes(x):
-
     if pd.isna(x) or str(x).strip() == "":
         return []
-
     parts = re.split(r"[,/;]+", str(x))
-
     return [p.strip().lower() for p in parts if p.strip()]
 
 
 def normalize_note(n):
-
     n = strip_accents(str(n).strip().lower())
-
     return n
 
 
@@ -159,32 +146,28 @@ def normalize_note(n):
 # =========================================================
 
 PILLARS = {
-    "fruity": {"pear","raspberry","strawberry","lychee","blackcurrant","peach","plum","apple","mango","orange"},
-    "floral": {"rose","jasmine","tuberose","orange blossom","peony","datura","iris","violet"},
+    "fruity": {"pear","raspberry","strawberry","lychee","blackcurrant","peach","plum","apple","mango","orange","bergamot","tangerine","mandarin","lemon"},
+    "floral": {"rose","jasmine","tuberose","orange blossom","peony","datura","iris","violet","neroli"},
     "gourmand": {"vanilla","praline","caramel","coffee","tonka","chocolate","benzoin"},
-    "woody": {"patchouli","cedar","sandalwood","vetiver","moss","oakmoss","papyrus"},
-    "musky": {"musk","ambroxan","ambergris"},
-    "resinous": {"incense","labdanum","amber"},
+    "woody": {"patchouli","cedar","cedarwood","sandalwood","vetiver","moss","oakmoss","papyrus"},
+    "musky": {"musk","white musk","ambroxan","ambergris","ambrox"},
+    "resinous": {"incense","labdanum","amber","myrrh"},
 }
 
 
 def detect_pillars(notes):
-
     blob = " ".join(notes)
-
     found = set()
-
     for pillar, kws in PILLARS.items():
         for kw in kws:
             if kw in blob:
                 found.add(pillar)
                 break
-
     return found
+
 
 # =========================================================
 # NOTE RARITY WEIGHTS
-# (rare notes increase similarity impact)
 # =========================================================
 
 NOTE_RARITY = {
@@ -200,7 +183,7 @@ NOTE_RARITY = {
     "datura": 1.3,
     "ambroxan": 1.2,
 
-    # common notes (low weight)
+    # common notes
     "bergamot": 0.6,
     "lemon": 0.6,
     "orange": 0.6,
@@ -209,15 +192,17 @@ NOTE_RARITY = {
     "rose": 0.9,
     "jasmine": 0.9,
 }
+
+
 # =========================================================
 # ANCHOR COMBOS
 # =========================================================
 
 ANCHOR_COMBOS = [
-    ({"rose","patchouli"},0.8),
-    ({"vanilla","patchouli"},0.6),
-    ({"coffee","vanilla"},0.8),
-    ({"praline","vanilla"},0.7),
+    ({"rose","patchouli"}, 0.8),
+    ({"vanilla","patchouli"}, 0.6),
+    ({"coffee","vanilla"}, 0.8),
+    ({"praline","vanilla"}, 0.7),
 ]
 
 
@@ -226,12 +211,9 @@ ANCHOR_COMBOS = [
 # =========================================================
 
 def penalties(query_pillars, perfume_pillars):
-
     pen = 0
-
     if "gourmand" in query_pillars and "gourmand" not in perfume_pillars:
         pen -= 1
-
     return pen
 
 
@@ -240,49 +222,44 @@ def penalties(query_pillars, perfume_pillars):
 # =========================================================
 
 def score_perfume(query_notes, row):
-
-    top = set(split_notes(row.get("Top Notes","")))
-    heart = set(split_notes(row.get("Heart Notes","")))
-    base = set(split_notes(row.get("Base Notes","")))
-
+    top = set(normalize_note(n) for n in split_notes(row.get("Top Notes","")))
+    heart = set(normalize_note(n) for n in split_notes(row.get("Heart Notes","")))
+    base = set(normalize_note(n) for n in split_notes(row.get("Base Notes","")))
     perfume_notes = top | heart | base
 
-    overlap = query_notes & perfume_notes
+    if not query_notes:
+        return 0.0
 
-    weighted_overlap = 0
-    total_weight = 0
-    
+    weighted_overlap = 0.0
+    total_weight = 0.0
+
     for note in query_notes:
-    
-        w = NOTE_RARITY.get(note,1.0)
+        w = NOTE_RARITY.get(note, 1.0)
         total_weight += w
-    
         if note in perfume_notes:
             weighted_overlap += w
-    
-    note_score = weighted_overlap / max(total_weight,1)
+
+    note_score = weighted_overlap / max(total_weight, 1.0)
 
     query_pillars = detect_pillars(query_notes)
     perfume_pillars = detect_pillars(perfume_notes)
-
     pillar_overlap = len(query_pillars & perfume_pillars)
+    vibe_score = pillar_overlap / max(len(query_pillars), 1)
 
-    vibe_score = pillar_overlap / max(len(query_pillars),1)
-
-    blended = NOTE_WEIGHT*note_score + VIBE_WEIGHT*vibe_score
+    blended = NOTE_WEIGHT * note_score + VIBE_WEIGHT * vibe_score
 
     # anchor bonuses
-    for combo,b in ANCHOR_COMBOS:
+    for combo, b in ANCHOR_COMBOS:
         if combo <= query_notes and combo <= perfume_notes:
-            blended += b/10
+            blended += b / 10
 
-    blended += penalties(query_pillars, perfume_pillars)/10
+    blended += penalties(query_pillars, perfume_pillars) / 10
 
-    # DNA similarity boost
+    # DNA boost
     if pillar_overlap >= 3:
-        blended += DNA_BOOST/10
+        blended += DNA_BOOST / 10
 
-    return max(min(blended*10,10),0)
+    return max(min(blended * 10, 10), 0)
 
 
 # =========================================================
@@ -293,9 +270,18 @@ def score_perfume(query_notes, row):
 def load_chogan_csv(path):
     return pd.read_csv(path)
 
-chogan = load_chogan_csv("chogan_catalog.csv")
+try:
+    chogan = load_chogan_csv("chogan_catalog.csv")
+except Exception as e:
+    st.error(f"Could not load chogan_catalog.csv: {e}")
+    st.stop()
 
-external, external_ws = load_external_from_sheets()
+try:
+    external, external_ws = load_external_from_sheets()
+except Exception as e:
+    st.error(f"Could not load external perfumes from Google Sheets: {e}")
+    external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
+    external_ws = None
 
 
 # =========================================================
@@ -304,35 +290,27 @@ external, external_ws = load_external_from_sheets()
 
 st.title("Find your Chogan Perfume")
 
-left, right = st.columns([1,2])
+left, right = st.columns([1, 2])
 
 with left:
-
     st.subheader("Search Mode")
 
     with st.form("search_form"):
+        mode = st.radio("Choose input type:", ["By perfume name", "By notes only"])
 
-        mode = st.radio("Choose input type:",["By perfume name","By notes only"])
-
-        perfume_name=""
-        brand_name=""
+        perfume_name = ""
+        brand_name = ""
 
         if mode == "By perfume name":
             perfume_name = st.text_input("Perfume name")
-            brand_name = st.text_input("Brand")
+            brand_name = st.text_input("Brand (optional)")
 
-        notes_text = st.text_input("Desired notes")
+        notes_text = st.text_input("Desired notes (comma-separated)")
 
         st.subheader("Filters (optional)")
-
         family_filter = st.text_input("Olfactory family contains")
-
-        gender_choice = st.selectbox(
-            "Gender preference",
-            ["Any","Women (F)","Men (M)","Unisex (U)"]
-        )
-
-        top_n = st.slider("How many recommendations?",1,5,3)
+        gender_choice = st.selectbox("Gender preference", ["Any", "Women (F)", "Men (M)", "Unisex (U)"])
+        top_n = st.slider("How many recommendations?", 1, 5, 3)
 
         search_clicked = st.form_submit_button("Search")
 
@@ -342,99 +320,128 @@ with left:
 # =========================================================
 
 with right:
-
     st.subheader("My Recommendations")
+
+    st.info(
+        """
+**How to read the match score:**
+- **7.0–10.0** → Excellent match — You'll love this one!
+- **5.0–6.9** → Good match, give it a try
+- **3.0–4.9** → Quite different, but some similar notes
+        """
+    )
 
     direct_matches_box = st.container()
 
     if not search_clicked:
-
-        st.info("Click Search to run recommendations.")
-
+        st.info("Click **Search** to run recommendations.")
     else:
-
-        raw = split_notes(notes_text)
-
+        # ---- build query notes ----
+        raw = [normalize_note(n) for n in split_notes(notes_text)]
         query_notes = set(raw)
 
-        direct_hits = chogan[
-            chogan["Inspiration"].str.lower().str.contains(perfume_name.lower(),na=False)
-        ] if perfume_name else pd.DataFrame()
+        # ---- direct hits (if perfume name search) ----
+        direct_hits = pd.DataFrame()
+        if mode == "By perfume name" and perfume_name.strip():
+            q = perfume_name.strip()
 
+            # Basic contains direct matches on Inspiration
+            direct_hits = chogan[chogan["Inspiration"].fillna("").str.lower().str.contains(q.lower(), na=False)]
 
-        # =========================================================
-        # DIRECT MATCH
-        # =========================================================
+            # Optional brand narrowing
+            if brand_name.strip() and len(direct_hits) > 1:
+                direct_hits = direct_hits[
+                    direct_hits["Inspiration"].fillna("").str.lower().str.contains(brand_name.strip().lower(), na=False)
+                ]
 
+        # ---- render direct hits on right ----
         with direct_matches_box:
-
             if len(direct_hits) > 0:
-
                 st.success(f"Direct match found ({len(direct_hits)})")
-
-                for rank,(_,hit) in enumerate(direct_hits.iterrows(),start=1):
-
-                    st.markdown(f"### ✅ Direct match #{rank} — {hit['Perfume reference']}")
-                    st.write(f"Inspiration: *{hit['Inspiration']}*")
-                    st.write(f"Top: {hit['Top Notes']}")
-                    st.write(f"Heart: {hit['Heart Notes']}")
-                    st.write(f"Base: {hit['Base Notes']}")
+                for rank, (_, hit) in enumerate(direct_hits.head(top_n).iterrows(), start=1):
+                    st.markdown(f"### ✅ Direct match #{rank} — {hit.get('Perfume reference','')}")
+                    st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
+                    st.write(f"Top: {hit.get('Top Notes','')}")
+                    st.write(f"Heart: {hit.get('Heart Notes','')}")
+                    st.write(f"Base: {hit.get('Base Notes','')}")
                     st.divider()
 
-
-        # =========================================================
-        # USE DIRECT MATCH NOTES AS SEED
-        # =========================================================
-
+        # ---- if no notes entered, seed from direct hit notes ----
         if len(direct_hits) > 0 and not query_notes:
-
             seed = direct_hits.iloc[0]
-
             query_notes = set(
-                split_notes(seed["Top Notes"]) +
-                split_notes(seed["Heart Notes"]) +
-                split_notes(seed["Base Notes"])
+                [normalize_note(n) for n in (
+                    split_notes(seed.get("Top Notes","")) +
+                    split_notes(seed.get("Heart Notes","")) +
+                    split_notes(seed.get("Base Notes",""))
+                )]
             )
-
             st.info("Using the direct match notes to generate secondary recommendations.")
 
+        # ---- if still no notes, we cannot score ----
+        if not query_notes:
+            st.warning("Please enter some notes (or search a perfume name that has a direct match) to get recommendations.")
+        else:
+            # ---- filter chogan (optional) ----
+            filtered = chogan.copy()
 
-        # =========================================================
-        # RECOMMENDATIONS
-        # =========================================================
+            if family_filter.strip() and "Olfactory Family" in filtered.columns:
+                filtered = filtered[
+                    filtered["Olfactory Family"].fillna("").str.lower().str.contains(family_filter.strip().lower(), na=False)
+                ]
 
-        results = []
+            if "Gender" in filtered.columns:
+                g = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
+                if gender_choice == "Women (F)":
+                    filtered = filtered[g == "F"]
+                elif gender_choice == "Men (M)":
+                    filtered = filtered[g == "M"]
+                elif gender_choice == "Unisex (U)":
+                    filtered = filtered[g == "U"]
 
-        for _,row in chogan.iterrows():
+            # ---- recommendations ----
+            results = []
+            for _, row in filtered.iterrows():
+                sc = score_perfume(query_notes, row)
 
-            score = score_perfume(query_notes,row)
+                # Optional fuzzy name boost (only when perfume_name provided)
+                if mode == "By perfume name" and perfume_name.strip():
+                    sim = name_similarity(perfume_name, row.get("Inspiration", ""))
+                    if sim > 0.85:
+                        sc = min(sc + 2.0, 10.0)
+                    elif sim > 0.70:
+                        sc = min(sc + 1.0, 10.0)
 
-            results.append((score,row))
+                results.append((sc, row))
 
-        results.sort(reverse=True,key=lambda x:x[0])
+            results.sort(key=lambda x: x[0], reverse=True)
 
-        shown = 0
+            shown = 0
+            for sc, row in results:
+                if sc < MIN_SCORE_TO_SHOW:
+                    continue
 
-        for score,row in results:
+                # ✅ CRITICAL FIX: only skip direct name matches if perfume_name exists
+                if perfume_name.strip() and perfume_name.lower() in str(row.get("Inspiration","")).lower():
+                    continue
 
-            if score < MIN_SCORE_TO_SHOW:
-                continue
+                shown += 1
+                st.markdown(f"### #{shown} — {row.get('Perfume reference','')}")
+                st.write(f"Inspiration: *{row.get('Inspiration','')}*")
+                st.write(f"Match score: **{sc:.2f}/10**")
+                st.write(f"Top: {row.get('Top Notes','')}")
+                st.write(f"Heart: {row.get('Heart Notes','')}")
+                st.write(f"Base: {row.get('Base Notes','')}")
+                st.divider()
 
-            if perfume_name.lower() in str(row["Inspiration"]).lower():
-                continue
+                if shown >= top_n:
+                    break
 
-            shown += 1
-
-            st.markdown(f"### #{shown} — {row['Perfume reference']}")
-            st.write(f"Inspiration: *{row['Inspiration']}*")
-            st.write(f"Match score: {score:.2f}/10")
-            st.write(f"Top: {row['Top Notes']}")
-            st.write(f"Heart: {row['Heart Notes']}")
-            st.write(f"Base: {row['Base Notes']}")
-            st.divider()
-
-            if shown >= top_n:
-                break
+            if shown == 0:
+                st.warning(
+                    "Sorry, we don't have a good match for the notes in the perfume you are looking for. "
+                    "Would you like to try something else?"
+                )
 
 
 # =========================================================
@@ -444,14 +451,13 @@ with right:
 st.subheader("Add / Update an External Perfume (manual entry)")
 
 with st.form("add_external", clear_on_submit=True):
-
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
     with c1:
         new_perfume = st.text_input("Perfume")
         new_brand = st.text_input("Brand")
         new_family = st.text_input("Olfactory Family")
-        new_gender = st.selectbox("Gender",["","F","M","U"])
+        new_gender = st.selectbox("Gender", ["", "F", "M", "U"])
 
     with c2:
         new_top = st.text_input("Top Notes")
@@ -462,26 +468,25 @@ with st.form("add_external", clear_on_submit=True):
     submitted = st.form_submit_button("Save external perfume")
 
 if submitted:
-
-    if not new_perfume:
+    if not new_perfume.strip():
         st.error("Perfume name required")
-
+    elif external_ws is None:
+        st.error("Google Sheets isn't connected right now (see error above).")
     else:
-
         row = {
-            "Perfume": new_perfume,
-            "Brand": new_brand,
-            "Gender": new_gender,
-            "Top Notes": new_top,
-            "Heart Notes": new_heart,
-            "Base Notes": new_base,
-            "All Notes": new_all,
-            "Olfactory Family": new_family,
+            "Perfume": new_perfume.strip(),
+            "Brand": new_brand.strip(),
+            "Gender": new_gender.strip(),
+            "Top Notes": new_top.strip(),
+            "Heart Notes": new_heart.strip(),
+            "Base Notes": new_base.strip(),
+            "All Notes": new_all.strip(),
+            "Olfactory Family": new_family.strip(),
         }
 
-        upsert_external_to_sheets(external_ws,row)
-
+        upsert_external_to_sheets(external_ws, row)
         st.success("Saved")
+        st.rerun()
 
 with st.expander("View saved external perfumes"):
     st.dataframe(external.tail(50))
