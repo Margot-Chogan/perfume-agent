@@ -245,37 +245,40 @@ def set_missing_smart(query_notes_set: set[str], perfume_notes_set: set[str]) ->
 # =========================================================
 
 PILLARS = {
+    # Fruits that are NOT primarily “citrus”
     "fruity": {
-        "pear","raspberry","strawberry","lychee","blackcurrant","currant","peach","plum",
-        "apple","mango","orange","mandarin","tangerine","bergamot","lemon"
+        "pear", "raspberry", "strawberry", "lychee", "blackcurrant", "currant",
+        "peach", "plum", "apple", "mango",
     },
-    "floral": {"rose","black rose","jasmine","tuberose","orange blossom","peony","datura","iris","violet","orchid"},
-    "gourmand": {"vanilla","praline","caramel","coffee","tonka","chocolate","benzoin","toffee","cocoa","honey"},
-    "woody": {"patchouli","cedar","sandalwood","vetiver","moss","oakmoss","papyrus","oud"},
-    "musky": {"musk","ambroxan","ambergris"},
-    "resinous": {"incense","labdanum","amber","myrrh","opoponax"},
+
+    # Citrus family (kept separate so it can be matched as its own accord)
+    "citrussy": {
+        "bergamot", "lemon", "lime", "orange", "mandarin", "tangerine",
+        "grapefruit", "pomelo", "yuzu", "citron", "blood orange",
+        "orange zest", "lemon zest", "citrus", "citric",
+        "neroli", "petitgrain",
+    },
+
+    "floral": {
+        "rose", "black rose", "jasmine", "tuberose", "orange blossom", "peony",
+        "datura", "iris", "violet", "orchid",
+    },
+
+    "gourmand": {
+        "vanilla", "praline", "caramel", "coffee", "tonka", "chocolate",
+        "benzoin", "toffee", "cocoa", "honey",
+    },
+
+    "woody": {
+        "patchouli", "cedar", "sandalwood", "vetiver", "moss", "oakmoss",
+        "papyrus", "oud",
+    },
+
+    "musky": {"musk", "ambroxan", "ambergris"},
+
+    "resinous": {"incense", "labdanum", "amber", "myrrh", "opoponax"},
 }
 
-ANCHOR_COMBOS = [
-    ({"rose","patchouli"}, 0.8),
-    ({"vanilla","patchouli"}, 0.6),
-    ({"coffee","vanilla"}, 0.8),
-    ({"praline","vanilla"}, 0.7),
-]
-
-def detect_pillars(notes_set: set[str]) -> set[str]:
-    # Notes are normalized; pillar keywords are normalized too
-    found = set()
-    for pillar, kws in PILLARS.items():
-        if notes_set & kws:
-            found.add(pillar)
-    return found
-
-def penalties(query_pillars: set[str], perfume_pillars: set[str]) -> float:
-    pen = 0.0
-    if "gourmand" in query_pillars and "gourmand" not in perfume_pillars:
-        pen -= 1.0
-    return pen
 
 # =========================================================
 # SCORING (PYRAMID + VIBE)
