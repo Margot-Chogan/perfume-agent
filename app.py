@@ -22,13 +22,11 @@ EXPECTED_EXTERNAL_COLS = [
     "Olfactory Family",
 ]
 
-# Optional improvement (as requested)
+# Scoring blend
 NOTE_WEIGHT = 0.70
 VIBE_WEIGHT = 0.30
 
-# Extra “same DNA” bump when pillars overlap strongly
-DNA_BOOST = 0.7  # (adds 0.7/10)
-
+DNA_BOOST = 0.7  # adds 0.7/10 when pillars overlap strongly
 MIN_SCORE_TO_SHOW = 3.0
 
 
@@ -124,7 +122,6 @@ def name_similarity(a, b):
     ta = set(a.split())
     tb = set(b.split())
     jac = len(ta & tb) / len(ta | tb) if (ta or tb) else 0.0
-
     return (fuzz + jac) / 2.0
 
 
@@ -152,7 +149,10 @@ def normalize_notes_list(lst):
 # =========================================================
 
 PILLARS = {
-    "fruity": {"pear","raspberry","strawberry","lychee","blackcurrant","currant","peach","plum","apple","mango","orange","mandarin","tangerine","bergamot","lemon"},
+    "fruity": {
+        "pear","raspberry","strawberry","lychee","blackcurrant","currant","peach","plum",
+        "apple","mango","orange","mandarin","tangerine","bergamot","lemon"
+    },
     "floral": {"rose","black rose","jasmine","tuberose","orange blossom","peony","datura","iris","violet","orchid"},
     "gourmand": {"vanilla","praline","caramel","coffee","tonka","chocolate","benzoin","toffee","cocoa"},
     "woody": {"patchouli","cedar","cedarwood","sandalwood","vetiver","moss","oakmoss","papyrus"},
@@ -169,7 +169,8 @@ ANCHOR_COMBOS = [
 
 
 def detect_pillars(notes_set):
-    blob = " ".join(notes_set)
+    # Notes are already normalized; we still do substring-friendly blob matching
+    blob = " ".join(sorted(notes_set))
     found = set()
     for pillar, kws in PILLARS.items():
         for kw in kws:
@@ -181,7 +182,6 @@ def detect_pillars(notes_set):
 
 def penalties(query_pillars, perfume_pillars):
     pen = 0.0
-    # Example penalty: if user wants gourmand but candidate lacks gourmand
     if "gourmand" in query_pillars and "gourmand" not in perfume_pillars:
         pen -= 1.0
     return pen
@@ -200,12 +200,6 @@ def get_row_note_sets(row):
 
 
 def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart, perf_base):
-    """
-    Pyramid-aware overlap:
-    - We score hits higher when they land in the same level.
-    - Smaller credit if they land in adjacent levels.
-    Returns score in [0..1] scale.
-    """
     q_top = set(query_top)
     q_heart = set(query_heart)
     q_base = set(query_base)
@@ -216,7 +210,6 @@ def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart
 
     s = 0.0
 
-    # Top queries
     for n in q_top:
         if n in perf_top:
             s += 2.0
@@ -225,7 +218,6 @@ def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart
         elif n in perf_base:
             s += 0.8
 
-    # Heart queries
     for n in q_heart:
         if n in perf_heart:
             s += 1.6
@@ -234,7 +226,6 @@ def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart
         elif n in perf_base:
             s += 1.0
 
-    # Base queries
     for n in q_base:
         if n in perf_base:
             s += 1.4
@@ -254,7 +245,7 @@ def score_notes_simple(query_notes, perfume_notes):
 def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_heart=None, query_base=None):
     perf_top, perf_heart, perf_base, perf_all = get_row_note_sets(row)
 
-    # --- NOTE SCORE (0..1) ---
+    # NOTE SCORE (0..1)
     if used_pyramid and (query_top or query_heart or query_base):
         note_score = score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart, perf_base)
         q_all_for_vibe = set(query_top) | set(query_heart) | set(query_base)
@@ -262,7 +253,7 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
         note_score = score_notes_simple(query_notes, perf_all)
         q_all_for_vibe = set(query_notes)
 
-    # --- VIBE SCORE (0..1) ---
+    # VIBE SCORE (0..1)
     query_pillars = detect_pillars(q_all_for_vibe)
     perfume_pillars = detect_pillars(perf_all)
 
@@ -271,19 +262,23 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 
     blended = NOTE_WEIGHT * note_score + VIBE_WEIGHT * vibe_score
 
-    # Anchor combos (small nudges)
+    # Anchors
     for combo, b in ANCHOR_COMBOS:
         if combo <= q_all_for_vibe and combo <= perf_all:
             blended += b / 10.0
 
-    # Pillar penalties
     blended += penalties(query_pillars, perfume_pillars) / 10.0
 
-    # DNA boost if vibe overlap strong
     if pillar_overlap >= 3:
         blended += DNA_BOOST / 10.0
 
-    return max(min(blended * 10.0, 10.0), 0.0)
+    score10 = max(min(blended * 10.0, 10.0), 0.0)
+
+    # Return extra info so UI can show matched notes + matched accords
+    matched_notes = sorted(set(query_notes) & set(perf_all))
+    matched_pillars = sorted(query_pillars & perfume_pillars)
+
+    return score10, matched_notes, matched_pillars
 
 
 # =========================================================
@@ -319,7 +314,6 @@ left, right = st.columns([1, 2])
 with left:
     st.subheader("Search Mode")
 
-    # Search runs ONLY when button clicked
     with st.form("search_form"):
         mode = st.radio("Choose input type:", ["By perfume name", "By notes only"])
 
@@ -333,6 +327,7 @@ with left:
 
         st.subheader("Filters (optional)")
         family_filter = st.text_input("Olfactory family contains")
+
         gender_choice = st.selectbox(
             "Gender preference",
             [
@@ -341,11 +336,11 @@ with left:
                 "Men (M)",
                 "Unisex (U)",
                 "Women or Unisex (F/U)",
-                "Men or Unisex (M/U)"
+                "Men or Unisex (M/U)",
             ]
         )
-        top_n = st.slider("How many recommendations?", 1, 5, 3)
 
+        top_n = st.slider("How many recommendations?", 1, 5, 3)
         search_clicked = st.form_submit_button("Search")
 
 
@@ -368,7 +363,7 @@ with right:
         st.info("Click **Search** to run recommendations.")
     else:
         # -------------------------------------------------
-        # 1) Build query notes (from user text first)
+        # 1) Build query notes from user text
         # -------------------------------------------------
         raw_notes = normalize_notes_list(split_notes(notes_text))
         query_notes = set(raw_notes)
@@ -377,7 +372,7 @@ with right:
         query_top, query_heart, query_base = set(), set(), set()
 
         # -------------------------------------------------
-        # 2) Find direct Chogan inspiration matches (if name search)
+        # 2) Direct matches in Chogan inspirations
         # -------------------------------------------------
         direct_hits = chogan.iloc[0:0]
         if mode == "By perfume name" and perfume_name.strip():
@@ -390,7 +385,6 @@ with right:
                     direct_hits["Inspiration"].fillna("").astype(str).str.lower().str.contains(bq, na=False)
                 ]
 
-        # Render direct hits on RIGHT
         with direct_matches_box:
             if len(direct_hits) > 0:
                 st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
@@ -411,10 +405,8 @@ with right:
                     st.divider()
 
         # -------------------------------------------------
-        # 3) Use external sheet notes if the perfume is in external db
-        #    (this is what makes external perfumes work again)
+        # 3) Pull notes from external DB (makes external perfumes work)
         # -------------------------------------------------
-        used_external = None
         if mode == "By perfume name" and perfume_name.strip() and not external.empty:
             mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
             matches = external[mask]
@@ -431,12 +423,10 @@ with right:
                 eba = set(normalize_notes_list(split_notes(used_external.get("Base Notes", ""))))
 
                 if etop or ehe or eba:
-                    # Pyramid available -> activate pyramid weighting
                     query_top, query_heart, query_base = etop, ehe, eba
                     used_pyramid = True
                     query_notes |= (etop | ehe | eba)
                 else:
-                    # Fallback: all notes
                     eall = set(normalize_notes_list(split_notes(used_external.get("All Notes", ""))))
                     query_notes |= eall
                     used_pyramid = False
@@ -444,12 +434,10 @@ with right:
                 st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
 
         # -------------------------------------------------
-        # 4) If no typed notes and no external match,
-        #    seed from direct hit notes (still gives recommendations)
+        # 4) If still no notes, seed from direct hit notes
         # -------------------------------------------------
         if (not query_notes) and len(direct_hits) > 0:
             seed = direct_hits.iloc[0].to_dict()
-
             st.info("Using the direct match notes to generate secondary recommendations.")
 
             qtop = set(normalize_notes_list(split_notes(seed.get("Top Notes", ""))))
@@ -461,12 +449,11 @@ with right:
                 used_pyramid = True
                 query_notes |= (qtop | qhe | qba)
             else:
-                # If the dataset doesn't have pyramid, just use what it has
                 query_notes |= set(normalize_notes_list(split_notes(seed.get("All Notes", ""))))
                 used_pyramid = False
 
         # -------------------------------------------------
-        # 5) Apply filters to Chogan catalog
+        # 5) Apply filters (family + robust gender)
         # -------------------------------------------------
         filtered = chogan.copy()
 
@@ -475,58 +462,47 @@ with right:
                 filtered["Olfactory Family"].fillna("").astype(str).str.lower().str.contains(family_filter.strip().lower(), na=False)
             ]
 
+        # Robust gender normalization + filter
         if "Gender" in filtered.columns:
-            g = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
+            g_raw = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
+
+            def norm_gender(val: str) -> str:
+                v = val.strip().upper()
+                if v in {"F", "M", "U"}:
+                    return v
+                if "UNISEX" in v:
+                    return "U"
+                if "WOM" in v or "FEM" in v:
+                    return "F"
+                if "MEN" in v or "MASC" in v:
+                    return "M"
+                if "F" in v and "U" in v:
+                    return "F/U"
+                if "M" in v and "U" in v:
+                    return "M/U"
+                return v
+
+            g = g_raw.apply(norm_gender)
+
             if gender_choice == "Women (F)":
-                filtered = filtered[g == "F"]
+                filtered = filtered[g.isin(["F", "F/U"])]
             elif gender_choice == "Men (M)":
-                filtered = filtered[g == "M"]
+                filtered = filtered[g.isin(["M", "M/U"])]
             elif gender_choice == "Unisex (U)":
-                filtered = filtered[g == "U"]
+                filtered = filtered[g.isin(["U", "F/U", "M/U"])]
+            elif gender_choice == "Women or Unisex (F/U)":
+                filtered = filtered[g.isin(["F", "U", "F/U"])]
+            elif gender_choice == "Men or Unisex (M/U)":
+                filtered = filtered[g.isin(["M", "U", "M/U"])]
+            # "Any" -> no filter
 
-# --- Apply Gender Filter (robust) ---
-if "Gender" in filtered.columns:
-    g_raw = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
-
-    # Normalize messy values into F/M/U when possible
-    def norm_gender(val: str) -> str:
-        v = val.strip().upper()
-        if v in {"F", "M", "U"}:
-            return v
-        if "UNISEX" in v:
-            return "U"
-        if "WOM" in v or "FEM" in v:
-            return "F"
-        if "MEN" in v or "MASC" in v:
-            return "M"
-        # handle things like "F/U", "M/U"
-        if "F" in v and "U" in v:
-            return "F/U"
-        if "M" in v and "U" in v:
-            return "M/U"
-        return v
-
-    g = g_raw.apply(norm_gender)
-
-    if gender_choice == "Women (F)":
-        filtered = filtered[g.isin(["F", "F/U"])]
-    elif gender_choice == "Men (M)":
-        filtered = filtered[g.isin(["M", "M/U"])]
-    elif gender_choice == "Unisex (U)":
-        filtered = filtered[g.isin(["U", "F/U", "M/U"])]
-    elif gender_choice == "Women or Unisex (F/U)":
-        filtered = filtered[g.isin(["F", "U", "F/U"])]
-    elif gender_choice == "Men or Unisex (M/U)":
-        filtered = filtered[g.isin(["M", "U", "M/U"])]
-        
         # -------------------------------------------------
-        # 6) Score & show recommendations
-        #    IMPORTANT: Even if direct hits exist, we STILL show secondary recs.
-        #    We just avoid repeating the same direct-hit items.
+        # 6) Score & show recommendations (ALWAYS runs now)
         # -------------------------------------------------
         if not query_notes and not used_pyramid:
             st.warning("Add some notes, or search a perfume name that exists in your external database.")
         else:
+            # Avoid duplicating the same direct-hit refs in secondary list
             direct_refs = set()
             if len(direct_hits) > 0:
                 for _, hit in direct_hits.iterrows():
@@ -542,7 +518,6 @@ if "Gender" in filtered.columns:
 
             results = []
             for _, row in filtered.iterrows():
-                # Skip showing exact same direct-hit reference in secondary list
                 ref = (
                     row.get("Perfume reference")
                     or row.get("Perfume ref.")
@@ -554,7 +529,7 @@ if "Gender" in filtered.columns:
                 if str(ref).strip().lower() in direct_refs:
                     continue
 
-                score = score_perfume(
+                score, matched_notes, matched_pillars = score_perfume(
                     query_notes=query_notes,
                     row=row,
                     used_pyramid=used_pyramid,
@@ -563,7 +538,7 @@ if "Gender" in filtered.columns:
                     query_base=query_base,
                 )
 
-                # Optional: name similarity boost (helps “Rouge”, partial names, etc.)
+                # Optional name similarity boost
                 if mode == "By perfume name" and perfume_name.strip():
                     sim = name_similarity(perfume_name, str(row.get("Inspiration", "")))
                     if sim > 0.85:
@@ -571,12 +546,12 @@ if "Gender" in filtered.columns:
                     elif sim > 0.70:
                         score = min(score + 0.8, 10.0)
 
-                results.append((score, row))
+                results.append((score, matched_notes, matched_pillars, row))
 
             results.sort(key=lambda x: x[0], reverse=True)
 
             shown = 0
-            for score, row in results:
+            for score, matched_notes, matched_pillars, row in results:
                 if score < MIN_SCORE_TO_SHOW:
                     continue
 
@@ -593,6 +568,10 @@ if "Gender" in filtered.columns:
                 st.markdown(f"### #{shown} — **{ref}**")
                 st.write(f"Inspiration: *{row.get('Inspiration','')}*")
                 st.write(f"**Match score:** {score:.2f} / 10")
+
+                # ✅ Matched notes + accords/pillars (what you asked for)
+                st.write(f"**Matched notes:** {', '.join(matched_notes) if matched_notes else 'None'}")
+                st.write(f"**Matched accords:** {', '.join(matched_pillars) if matched_pillars else 'None'}")
 
                 st.write(f"Top: {row.get('Top Notes','')}")
                 st.write(f"Heart: {row.get('Heart Notes','')}")
