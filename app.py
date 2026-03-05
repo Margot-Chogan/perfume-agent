@@ -27,11 +27,9 @@ EXPECTED_EXTERNAL_COLS = [
     "Olfactory Family",
 ]
 
-# Scoring blend
 NOTE_WEIGHT = 0.70
 VIBE_WEIGHT = 0.30
-
-DNA_BOOST = 0.7  # adds 0.7/10 when pillars overlap strongly
+DNA_BOOST = 0.7
 MIN_SCORE_TO_SHOW = 3.0
 
 
@@ -45,12 +43,9 @@ if "last_payload_key" not in st.session_state:
     st.session_state.last_payload_key = None
 if "cached_results" not in st.session_state:
     st.session_state.cached_results = None
-
-# Used to force browser scroll-to-top when switching to results (mobile)
 if "scroll_nonce" not in st.session_state:
     st.session_state.scroll_nonce = 0
 
-# Default UI values (stored in session_state so Reset works)
 _defaults = {
     "mode": "By perfume name",
     "perfume_name": "",
@@ -59,7 +54,7 @@ _defaults = {
     "family_filter": "",
     "gender_choice": "Any",
     "top_n": 3,
-    "mobile_mode": False,  # toggle
+    "mobile_mode": True,  # default ON; user can turn off
 }
 for k, v in _defaults.items():
     if k not in st.session_state:
@@ -299,7 +294,6 @@ def score_notes_simple(query_notes, perfume_notes):
 def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_heart=None, query_base=None):
     perf_top, perf_heart, perf_base, perf_all = get_row_note_sets(row)
 
-    # NOTE SCORE (0..1)
     if used_pyramid and (query_top or query_heart or query_base):
         note_score = score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart, perf_base)
         q_all_for_vibe = set(query_top) | set(query_heart) | set(query_base)
@@ -307,7 +301,6 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
         note_score = score_notes_simple(query_notes, perf_all)
         q_all_for_vibe = set(query_notes)
 
-    # VIBE SCORE (0..1)
     query_pillars = detect_pillars(q_all_for_vibe)
     perfume_pillars = detect_pillars(perf_all)
 
@@ -316,7 +309,6 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 
     blended = NOTE_WEIGHT * note_score + VIBE_WEIGHT * vibe_score
 
-    # Anchors
     for combo, b in ANCHOR_COMBOS:
         if combo <= q_all_for_vibe and combo <= perf_all:
             blended += b / 10.0
@@ -403,13 +395,12 @@ def apply_filters(df: pd.DataFrame, family_filter: str, gender_choice: str) -> p
             filtered = filtered[g.isin(["F", "U", "F/U"])]
         elif gender_choice == "Men or Unisex (M/U)":
             filtered = filtered[g.isin(["M", "U", "M/U"])]
-        # Any -> no filter
 
     return filtered
 
 
 # =========================================================
-# SEARCH / RECOMMENDATION PIPELINE (CACHED)
+# SEARCH / RECOMMENDATION PIPELINE
 # =========================================================
 
 def get_ref(row) -> str:
@@ -424,6 +415,34 @@ def get_ref(row) -> str:
     return str(ref).strip()
 
 
+def score_key_block():
+    st.markdown(
+        """
+**Score key**
+
+- **7.0–10.0** → Excellent match  
+- **5.0–6.9** → Good match  
+- **3.0–4.9** → Some overlap, but different  
+        """
+    )
+
+
+def current_payload() -> dict:
+    return {
+        "mode": st.session_state.mode,
+        "perfume_name": st.session_state.perfume_name,
+        "brand_name": st.session_state.brand_name,
+        "notes_text": st.session_state.notes_text,
+        "family_filter": st.session_state.family_filter,
+        "gender_choice": st.session_state.gender_choice,
+        "top_n": int(st.session_state.top_n),
+    }
+
+
+def payload_key(p: dict) -> str:
+    return json.dumps(p, sort_keys=True, ensure_ascii=False)
+
+
 def compute_results(payload: dict) -> dict:
     mode = payload["mode"]
     perfume_name = payload["perfume_name"]
@@ -433,14 +452,12 @@ def compute_results(payload: dict) -> dict:
     gender_choice = payload["gender_choice"]
     top_n = payload["top_n"]
 
-    # 1) Start with typed notes
     raw_notes = normalize_notes_list(split_notes(notes_text))
     query_notes = set(raw_notes)
 
     used_pyramid = False
     query_top, query_heart, query_base = set(), set(), set()
 
-    # 2) Direct matches in Chogan inspirations
     direct_hits = chogan.iloc[0:0]
     if mode == "By perfume name" and perfume_name.strip():
         q = perfume_name.strip().lower()
@@ -453,7 +470,6 @@ def compute_results(payload: dict) -> dict:
                 direct_hits["Inspiration"].fillna("").astype(str).str.lower().str.contains(bq, na=False)
             ]
 
-    # 3) Pull notes from external DB
     used_external = None
     if mode == "By perfume name" and perfume_name.strip() and not external.empty:
         mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
@@ -479,7 +495,6 @@ def compute_results(payload: dict) -> dict:
                 query_notes |= eall
                 used_pyramid = False
 
-    # 4) If still no notes, seed from direct hit notes
     if (not query_notes) and len(direct_hits) > 0:
         seed = direct_hits.iloc[0].to_dict()
         qtop = set(normalize_notes_list(split_notes(seed.get("Top Notes", ""))))
@@ -494,10 +509,8 @@ def compute_results(payload: dict) -> dict:
             query_notes |= set(normalize_notes_list(split_notes(seed.get("All Notes", ""))))
             used_pyramid = False
 
-    # 5) Apply filters
     filtered = apply_filters(chogan, family_filter, gender_choice)
 
-    # 6) Score recommendations (always possible if we have notes)
     direct_refs = set()
     if len(direct_hits) > 0:
         for _, hit in direct_hits.iterrows():
@@ -519,7 +532,6 @@ def compute_results(payload: dict) -> dict:
                 query_base=query_base,
             )
 
-            # Optional: name similarity boost
             if mode == "By perfume name" and perfume_name.strip():
                 sim = name_similarity(perfume_name, str(row.get("Inspiration", "")))
                 if sim > 0.85:
@@ -540,43 +552,20 @@ def compute_results(payload: dict) -> dict:
     return {
         "direct_hits": direct_hits,
         "used_external": used_external,
-        "used_pyramid": used_pyramid,
-        "query_notes": query_notes,
-        "query_top": query_top,
-        "query_heart": query_heart,
-        "query_base": query_base,
         "recommendations": recommendations,
     }
 
 
-def current_payload() -> dict:
-    return {
-        "mode": st.session_state.mode,
-        "perfume_name": st.session_state.perfume_name,
-        "brand_name": st.session_state.brand_name,
-        "notes_text": st.session_state.notes_text,
-        "family_filter": st.session_state.family_filter,
-        "gender_choice": st.session_state.gender_choice,
-        "top_n": int(st.session_state.top_n),
-    }
-
-
-def payload_key(p: dict) -> str:
-    return json.dumps(p, sort_keys=True, ensure_ascii=False)
-
-
 # =========================================================
-# SCROLL-TO-TOP HELPER
+# SCROLL-TO-TOP
 # =========================================================
 
 def scroll_to_top():
-    # This runs on each rerun; the nonce ensures the browser actually executes it on transitions.
     st.markdown(
         f"""
 <script>
 (function() {{
   const nonce = {st.session_state.scroll_nonce};
-  // Put nonce into history state so browser doesn't optimize it away
   if (!window.__scrollNonce || window.__scrollNonce !== nonce) {{
     window.__scrollNonce = nonce;
     window.scrollTo(0, 0);
@@ -602,46 +591,42 @@ tab_search, tab_add = st.tabs(["Search", "Add a new perfume to the database"])
 with tab_search:
     st.toggle("Mobile mode (results replace search)", key="mobile_mode")
 
-    # If we're showing results, force scroll to top (especially important on mobile)
     if st.session_state.view == "results":
         scroll_to_top()
 
-    # ======= SEARCH VIEW =======
+    # ===== SEARCH VIEW =====
     if st.session_state.view == "search":
-        left, right = st.columns([1, 2])
-
-        with left:
+        if st.session_state.mobile_mode:
             st.subheader("Search")
 
+            # Keep the always-visible inputs minimal (less keyboard takeover)
             st.radio("Choose input type:", ["By perfume name", "By notes only"], key="mode")
 
             if st.session_state.mode == "By perfume name":
                 st.text_input("Perfume name (e.g., Nina)", key="perfume_name")
                 st.text_input("Brand (optional)", key="brand_name")
             else:
-                # Keep fields but user can ignore; we won't use them for notes-only mode
-                st.text_input("Perfume name (optional)", key="perfume_name")
-                st.text_input("Brand (optional)", key="brand_name")
+                st.text_input("Desired notes (comma-separated)", key="notes_text")
 
-            st.text_input("Desired notes (comma-separated)", key="notes_text")
+            # Put long inputs + filters behind expanders (better mobile)
+            with st.expander("Notes (optional)", expanded=False):
+                st.text_input("Desired notes (comma-separated)", key="notes_text")
 
-            st.subheader("Filters (optional)")
-            st.text_input("Olfactory family contains", key="family_filter")
-
-            st.selectbox(
-                "Gender preference",
-                [
-                    "Any",
-                    "Women (F)",
-                    "Men (M)",
-                    "Unisex (U)",
-                    "Women or Unisex (F/U)",
-                    "Men or Unisex (M/U)",
-                ],
-                key="gender_choice",
-            )
-
-            st.slider("How many recommendations?", 1, 5, key="top_n")
+            with st.expander("Filters (optional)", expanded=False):
+                st.text_input("Olfactory family contains", key="family_filter")
+                st.selectbox(
+                    "Gender preference",
+                    [
+                        "Any",
+                        "Women (F)",
+                        "Men (M)",
+                        "Unisex (U)",
+                        "Women or Unisex (F/U)",
+                        "Men or Unisex (M/U)",
+                    ],
+                    key="gender_choice",
+                )
+                st.slider("How many recommendations?", 1, 5, key="top_n")
 
             c1, c2 = st.columns(2)
             with c1:
@@ -650,20 +635,62 @@ with tab_search:
                     k = payload_key(p)
                     st.session_state.last_payload_key = k
                     st.session_state.cached_results = compute_results(p)
-
-                    # If mobile_mode is ON, switch to results view (replaces search)
-                    # If mobile_mode is OFF, we still switch view; results will show on right after rerun
                     go_to_results()
             with c2:
                 st.button("Reset", on_click=reset_search, use_container_width=True)
 
-        with right:
-            # Only show this section after a search has been done (requested)
-            st.info("Run a search to see recommendations.")
+        else:
+            # Desktop: form left, placeholder right until searched
+            left, right = st.columns([1, 2])
 
-    # ======= RESULTS VIEW =======
+            with left:
+                st.subheader("Search")
+
+                st.radio("Choose input type:", ["By perfume name", "By notes only"], key="mode")
+
+                if st.session_state.mode == "By perfume name":
+                    st.text_input("Perfume name (e.g., Nina)", key="perfume_name")
+                    st.text_input("Brand (optional)", key="brand_name")
+                else:
+                    st.text_input("Perfume name (optional)", key="perfume_name")
+                    st.text_input("Brand (optional)", key="brand_name")
+
+                st.text_input("Desired notes (comma-separated)", key="notes_text")
+
+                st.subheader("Filters (optional)")
+                st.text_input("Olfactory family contains", key="family_filter")
+
+                st.selectbox(
+                    "Gender preference",
+                    [
+                        "Any",
+                        "Women (F)",
+                        "Men (M)",
+                        "Unisex (U)",
+                        "Women or Unisex (F/U)",
+                        "Men or Unisex (M/U)",
+                    ],
+                    key="gender_choice",
+                )
+
+                st.slider("How many recommendations?", 1, 5, key="top_n")
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Search", type="primary", use_container_width=True):
+                        p = current_payload()
+                        k = payload_key(p)
+                        st.session_state.last_payload_key = k
+                        st.session_state.cached_results = compute_results(p)
+                        go_to_results()
+                with c2:
+                    st.button("Reset", on_click=reset_search, use_container_width=True)
+
+            with right:
+                st.info("Run a search to see recommendations.")
+
+    # ===== RESULTS VIEW =====
     else:
-        # Ensure cache is valid
         p = current_payload()
         k = payload_key(p)
         if st.session_state.cached_results is None or st.session_state.last_payload_key != k:
@@ -675,11 +702,8 @@ with tab_search:
         recs = results["recommendations"]
         used_external = results["used_external"]
 
-        # Layout:
-        # - Mobile mode ON: results replace search (single column)
-        # - Mobile mode OFF (desktop): show form on left, results on right (requested)
         if st.session_state.mobile_mode:
-            # Single column results with back button
+            # Mobile results replace search
             topbar_left, topbar_right = st.columns([1, 1])
             with topbar_left:
                 st.subheader("My Recommendations")
@@ -717,16 +741,20 @@ with tab_search:
 
                     st.markdown(f"### #{i} — **{ref}**")
                     st.write(f"Inspiration: *{row.get('Inspiration','')}*")
-                    st.write(f"**Match score:** {score:.2f} / 10")
-                    st.write(f"**Matched notes:** {', '.join(matched_notes) if matched_notes else 'None'}")
-                    st.write(f"**Matched accords:** {', '.join(matched_pillars) if matched_pillars else 'None'}")
                     st.write(f"Top: {row.get('Top Notes','')}")
                     st.write(f"Heart: {row.get('Heart Notes','')}")
                     st.write(f"Base: {row.get('Base Notes','')}")
+                    st.write(f"**Matched notes:** {', '.join(matched_notes) if matched_notes else 'None'}")
+                    st.write(f"**Matched accords:** {', '.join(matched_pillars) if matched_pillars else 'None'}")
+                    st.write(f"**Match score:** {score:.2f} / 10")
                     st.divider()
 
+            # ✅ Score key at the bottom (requested)
+            st.divider()
+            score_key_block()
+
         else:
-            # Desktop: show search controls on the left AND results on the right
+            # Desktop: show search left, results right
             left, right = st.columns([1, 2])
 
             with left:
@@ -773,12 +801,9 @@ with tab_search:
                     st.button("Reset", on_click=reset_search, use_container_width=True, key="reset2")
 
                 st.divider()
-                if st.button("Switch to mobile results view", use_container_width=True):
-                    st.session_state.mobile_mode = True
-                    go_to_results()
+                score_key_block()
 
             with right:
-                # Only appear after search has been done (requested)
                 st.subheader("My Recommendations")
 
                 if used_external is not None:
@@ -864,7 +889,6 @@ with tab_add:
                 upsert_external_to_sheets(external_ws, row_dict)
                 st.success("Saved (updated if already existed).")
 
-                # Refresh local view
                 try:
                     external, external_ws = load_external_from_sheets()
                 except Exception:
