@@ -265,8 +265,17 @@ PILLARS = {
         "benzoin", "toffee", "cocoa", "honey",
     },
     "woody": {
-        "patchouli", "cedar", "sandalwood", "vetiver", "moss", "oakmoss",
-        "papyrus", "oud",
+        "patchouli", "cedar", "cedarwood", "sandalwood", "vetiver",
+    "moss", "oakmoss", "papyrus", "oud",
+
+    # ✅ modern woods / woody accords (needed for By the Fireplace etc.)
+    "guaiac", "guaiac wood",
+    "cashmeran",
+    "iso e super", "iso e",   # optional but useful if you ever store it
+    "amberwood",
+    "dry wood", "woody accord", "wood accord",
+    "smoke", "smoky",         # optional, often used with woods
+    "juniper",                # woody-aromatic
     },
     "musky": {"musk", "ambroxan", "ambergris"},
     "resinous": {"incense", "labdanum", "amber", "myrrh", "opoponax"},
@@ -281,11 +290,14 @@ ANCHOR_COMBOS = [
 
 def detect_pillars(notes_set: set[str]) -> set[str]:
     found = set()
+    notes_blob = " ".join(sorted(notes_set))
     for pillar, kws in PILLARS.items():
-        if notes_set & kws:
-            found.add(pillar)
+        for kw in kws:
+            if kw in notes_set or kw in notes_blob:
+                found.add(pillar)
+                break
     return found
-
+    
 def penalties(query_pillars: set[str], perfume_pillars: set[str]) -> float:
     pen = 0.0
     if "gourmand" in query_pillars and "gourmand" not in perfume_pillars:
