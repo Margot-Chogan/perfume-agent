@@ -267,7 +267,7 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
     return score10, matched_notes, matched_pillars
 
 # =========================================================
-# UI HELPERS (Score key + cards + pills)
+# UI HELPERS
 # =========================================================
 def score_label(score_10: float) -> str:
     if score_10 >= 7.0:
@@ -339,47 +339,10 @@ def score_card(score_10: float):
     )
 
 
-def pills_html(items: list[str]) -> str:
-    if not items:
-        items = ["None"]
-    # plain gray pills (no score color)
-    return "".join(
-        f"""
-        <span style="
-            display:inline-block;
-            padding:6px 10px;
-            margin:4px 6px 0 0;
-            border-radius:999px;
-            border:1px solid #e5e7eb;
-            background:#f3f4f6;
-            color:#111827;
-            font-size:0.9rem;
-            line-height:1;
-        ">{st._utils.escape_html(str(p))}</span>
-        """
-        for p in items
-    )
-
-
-def matched_boxes_row(matched_notes: list[str], matched_pillars: list[str]) -> None:
-    notes_pills = pills_html(matched_notes)
-    pillars_pills = pills_html(matched_pillars)
-
-    st.markdown(
-        f"""
-        <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:8px;">
-          <div style="flex:1; min-width:260px; border:1px solid #e5e7eb; background:#ffffff; border-radius:14px; padding:12px;">
-            <div style="font-weight:800; margin-bottom:6px;">Matched notes</div>
-            <div>{notes_pills}</div>
-          </div>
-          <div style="flex:1; min-width:260px; border:1px solid #e5e7eb; background:#ffffff; border-radius:14px; padding:12px;">
-            <div style="font-weight:800; margin-bottom:6px;">Matched accords</div>
-            <div>{pillars_pills}</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def matched_line(matched_notes: list[str], matched_pillars: list[str]):
+    notes_txt = ", ".join(matched_notes) if matched_notes else "None"
+    pillars_txt = ", ".join(matched_pillars) if matched_pillars else "None"
+    st.write(f"**Matched notes:** {notes_txt}   |   **Matched accords:** {pillars_txt}")
 
 # =========================================================
 # DATA LOAD
@@ -448,14 +411,14 @@ with tab_search:
         if not search_clicked:
             st.info("Click **Search** to run recommendations.")
         else:
-            # 1) query notes from typed notes
+            # 1) typed notes
             raw_notes = normalize_notes_list(split_notes(notes_text))
             query_notes = set(raw_notes)
 
             used_pyramid = False
             query_top, query_heart, query_base = set(), set(), set()
 
-            # 2) exact match display (chogan inspirations)
+            # 2) exact match (inspiration)
             direct_hits = chogan.iloc[0:0]
             if mode == "By perfume name" and perfume_name.strip():
                 q = perfume_name.strip().lower()
@@ -484,7 +447,7 @@ with tab_search:
                 st.write(f"Base: {hit.get('Base Notes','')}")
                 st.divider()
 
-            # 3) use external DB notes if available
+            # 3) external DB notes
             if mode == "By perfume name" and perfume_name.strip() and not external.empty:
                 mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
                 matches = external[mask]
@@ -510,7 +473,7 @@ with tab_search:
 
                     st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
 
-            # 4) if no notes, seed from exact match notes
+            # 4) seed from exact match if still no notes
             if (not query_notes) and len(direct_hits) > 0:
                 seed = direct_hits.iloc[0].to_dict()
                 st.info("Using the exact match notes to generate recommendations.")
@@ -561,7 +524,7 @@ with tab_search:
                 elif gender_choice == "Men or Unisex (M/U)":
                     filtered = filtered[g.isin(["M", "U", "M/U"])]
 
-            # 6) score + show
+            # 6) recommendations
             if not query_notes and not used_pyramid:
                 st.warning("Add some notes, or search a perfume name that exists in your external database.")
             else:
@@ -628,9 +591,8 @@ with tab_search:
 
                     st.markdown(f"### #{shown} — **{ref}**")
                     st.write(f"Inspiration: *{row.get('Inspiration','')}*")
-
                     score_card(score)
-                    matched_boxes_row(matched_notes, matched_pillars)
+                    matched_line(matched_notes, matched_pillars)
 
                     st.write(f"Top: {row.get('Top Notes','')}")
                     st.write(f"Heart: {row.get('Heart Notes','')}")
