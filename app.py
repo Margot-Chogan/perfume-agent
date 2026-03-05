@@ -22,9 +22,12 @@ EXPECTED_EXTERNAL_COLS = [
     "Olfactory Family",
 ]
 
-NOTE_WEIGHT = 0.65
-VIBE_WEIGHT = 0.35
-DNA_BOOST = 0.7
+# Optional improvement (as requested)
+NOTE_WEIGHT = 0.70
+VIBE_WEIGHT = 0.30
+
+# Extra “same DNA” bump when pillars overlap strongly
+DNA_BOOST = 0.7  # (adds 0.7/10)
 
 MIN_SCORE_TO_SHOW = 3.0
 
@@ -73,7 +76,6 @@ def load_external_from_sheets():
 
 
 def upsert_external_to_sheets(ws, row_dict):
-
     ws = get_external_worksheet()
     ensure_external_headers(ws)
 
@@ -83,11 +85,9 @@ def upsert_external_to_sheets(ws, row_dict):
     key_brand = row_dict.get("Brand", "").strip().lower()
 
     target_row = None
-
     for i, r in enumerate(records, start=2):
         p = str(r.get("Perfume", "")).strip().lower()
         b = str(r.get("Brand", "")).strip().lower()
-
         if p == key_perfume and b == key_brand:
             target_row = i
             break
@@ -110,27 +110,22 @@ def strip_accents(s):
 
 
 def norm_text(s):
-
     s = strip_accents(s).lower()
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s)
-
     return s.strip()
 
 
 def name_similarity(a, b):
-
     a = norm_text(a)
     b = norm_text(b)
 
     fuzz = SequenceMatcher(None, a, b).ratio()
-
     ta = set(a.split())
     tb = set(b.split())
+    jac = len(ta & tb) / len(ta | tb) if (ta or tb) else 0.0
 
-    jac = len(ta & tb) / len(ta | tb) if (ta or tb) else 0
-
-    return (fuzz + jac) / 2
+    return (fuzz + jac) / 2.0
 
 
 # =========================================================
@@ -138,127 +133,179 @@ def name_similarity(a, b):
 # =========================================================
 
 def split_notes(x):
-
     if pd.isna(x) or str(x).strip() == "":
         return []
-
     parts = re.split(r"[,/;]+", str(x))
-
     return [p.strip().lower() for p in parts if p.strip()]
 
 
 def normalize_note(n):
+    return strip_accents(str(n).strip().lower())
 
-    n = strip_accents(str(n).strip().lower())
 
-    return n
+def normalize_notes_list(lst):
+    return [normalize_note(x) for x in lst if str(x).strip()]
 
 
 # =========================================================
-# PILLARS
+# PILLARS (VIBE)
 # =========================================================
 
 PILLARS = {
-    "fruity": {"pear","raspberry","strawberry","lychee","blackcurrant","peach","plum","apple","mango","orange"},
-    "floral": {"rose","jasmine","tuberose","orange blossom","peony","datura","iris","violet"},
-    "gourmand": {"vanilla","praline","caramel","coffee","tonka","chocolate","benzoin"},
-    "woody": {"patchouli","cedar","sandalwood","vetiver","moss","oakmoss","papyrus"},
-    "musky": {"musk","ambroxan","ambergris"},
-    "resinous": {"incense","labdanum","amber"},
+    "fruity": {"pear","raspberry","strawberry","lychee","blackcurrant","currant","peach","plum","apple","mango","orange","mandarin","tangerine","bergamot","lemon"},
+    "floral": {"rose","black rose","jasmine","tuberose","orange blossom","peony","datura","iris","violet","orchid"},
+    "gourmand": {"vanilla","praline","caramel","coffee","tonka","chocolate","benzoin","toffee","cocoa"},
+    "woody": {"patchouli","cedar","cedarwood","sandalwood","vetiver","moss","oakmoss","papyrus"},
+    "musky": {"musk","white musk","ambroxan","ambergris"},
+    "resinous": {"incense","labdanum","amber","myrrh"},
 }
 
+ANCHOR_COMBOS = [
+    ({"rose","patchouli"}, 0.8),
+    ({"vanilla","patchouli"}, 0.6),
+    ({"coffee","vanilla"}, 0.8),
+    ({"praline","vanilla"}, 0.7),
+]
 
-def detect_pillars(notes):
 
-    blob = " ".join(notes)
-
+def detect_pillars(notes_set):
+    blob = " ".join(notes_set)
     found = set()
-
     for pillar, kws in PILLARS.items():
         for kw in kws:
             if kw in blob:
                 found.add(pillar)
                 break
-
     return found
 
 
-# =========================================================
-# ANCHOR COMBOS
-# =========================================================
-
-ANCHOR_COMBOS = [
-    ({"rose","patchouli"},0.8),
-    ({"vanilla","patchouli"},0.6),
-    ({"coffee","vanilla"},0.8),
-    ({"praline","vanilla"},0.7),
-]
-
-
-# =========================================================
-# PENALTIES
-# =========================================================
-
 def penalties(query_pillars, perfume_pillars):
-
-    pen = 0
-
+    pen = 0.0
+    # Example penalty: if user wants gourmand but candidate lacks gourmand
     if "gourmand" in query_pillars and "gourmand" not in perfume_pillars:
-        pen -= 1
-
+        pen -= 1.0
     return pen
 
 
 # =========================================================
-# SCORING
+# SCORING (PYRAMID + VIBE)
 # =========================================================
 
-def score_perfume(query_notes, row):
+def get_row_note_sets(row):
+    top = set(normalize_notes_list(split_notes(row.get("Top Notes", ""))))
+    heart = set(normalize_notes_list(split_notes(row.get("Heart Notes", ""))))
+    base = set(normalize_notes_list(split_notes(row.get("Base Notes", ""))))
+    all_notes = top | heart | base
+    return top, heart, base, all_notes
 
-    top = set(split_notes(row.get("Top Notes","")))
-    heart = set(split_notes(row.get("Heart Notes","")))
-    base = set(split_notes(row.get("Base Notes","")))
 
-    perfume_notes = top | heart | base
+def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart, perf_base):
+    """
+    Pyramid-aware overlap:
+    - We score hits higher when they land in the same level.
+    - Smaller credit if they land in adjacent levels.
+    Returns score in [0..1] scale.
+    """
+    q_top = set(query_top)
+    q_heart = set(query_heart)
+    q_base = set(query_base)
 
-    note_overlap = len(query_notes & perfume_notes)
+    denom = (2.0 * len(q_top)) + (1.6 * len(q_heart)) + (1.4 * len(q_base))
+    if denom <= 0:
+        return 0.0
 
-    note_score = note_overlap / max(len(query_notes),1)
+    s = 0.0
 
-    query_pillars = detect_pillars(query_notes)
-    perfume_pillars = detect_pillars(perfume_notes)
+    # Top queries
+    for n in q_top:
+        if n in perf_top:
+            s += 2.0
+        elif n in perf_heart:
+            s += 1.2
+        elif n in perf_base:
+            s += 0.8
+
+    # Heart queries
+    for n in q_heart:
+        if n in perf_heart:
+            s += 1.6
+        elif n in perf_top:
+            s += 1.2
+        elif n in perf_base:
+            s += 1.0
+
+    # Base queries
+    for n in q_base:
+        if n in perf_base:
+            s += 1.4
+        elif n in perf_heart:
+            s += 1.1
+
+    return max(min(s / denom, 1.0), 0.0)
+
+
+def score_notes_simple(query_notes, perfume_notes):
+    if not query_notes:
+        return 0.0
+    overlap = len(set(query_notes) & set(perfume_notes))
+    return overlap / max(len(set(query_notes)), 1)
+
+
+def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_heart=None, query_base=None):
+    perf_top, perf_heart, perf_base, perf_all = get_row_note_sets(row)
+
+    # --- NOTE SCORE (0..1) ---
+    if used_pyramid and (query_top or query_heart or query_base):
+        note_score = score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart, perf_base)
+        q_all_for_vibe = set(query_top) | set(query_heart) | set(query_base)
+    else:
+        note_score = score_notes_simple(query_notes, perf_all)
+        q_all_for_vibe = set(query_notes)
+
+    # --- VIBE SCORE (0..1) ---
+    query_pillars = detect_pillars(q_all_for_vibe)
+    perfume_pillars = detect_pillars(perf_all)
 
     pillar_overlap = len(query_pillars & perfume_pillars)
+    vibe_score = pillar_overlap / max(len(query_pillars), 1) if query_pillars else 0.0
 
-    vibe_score = pillar_overlap / max(len(query_pillars),1)
+    blended = NOTE_WEIGHT * note_score + VIBE_WEIGHT * vibe_score
 
-    blended = NOTE_WEIGHT*note_score + VIBE_WEIGHT*vibe_score
+    # Anchor combos (small nudges)
+    for combo, b in ANCHOR_COMBOS:
+        if combo <= q_all_for_vibe and combo <= perf_all:
+            blended += b / 10.0
 
-    # anchor bonuses
-    for combo,b in ANCHOR_COMBOS:
-        if combo <= query_notes and combo <= perfume_notes:
-            blended += b/10
+    # Pillar penalties
+    blended += penalties(query_pillars, perfume_pillars) / 10.0
 
-    blended += penalties(query_pillars, perfume_pillars)/10
-
-    # DNA similarity boost
+    # DNA boost if vibe overlap strong
     if pillar_overlap >= 3:
-        blended += DNA_BOOST/10
+        blended += DNA_BOOST / 10.0
 
-    return max(min(blended*10,10),0)
+    return max(min(blended * 10.0, 10.0), 0.0)
 
 
 # =========================================================
-# LOAD DATA
+# DATA LOAD
 # =========================================================
 
 @st.cache_data
 def load_chogan_csv(path):
     return pd.read_csv(path)
 
-chogan = load_chogan_csv("chogan_catalog.csv")
+try:
+    chogan = load_chogan_csv("chogan_catalog.csv")
+except Exception:
+    st.error("Could not load chogan_catalog.csv. Make sure it is in your repo.")
+    st.stop()
 
-external, external_ws = load_external_from_sheets()
+try:
+    external, external_ws = load_external_from_sheets()
+except Exception as e:
+    st.error(f"Could not load external perfumes from Google Sheets: {e}")
+    external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
+    external_ws = None
 
 
 # =========================================================
@@ -267,137 +314,254 @@ external, external_ws = load_external_from_sheets()
 
 st.title("Find your Chogan Perfume")
 
-left, right = st.columns([1,2])
+left, right = st.columns([1, 2])
 
 with left:
-
     st.subheader("Search Mode")
 
+    # Search runs ONLY when button clicked
     with st.form("search_form"):
+        mode = st.radio("Choose input type:", ["By perfume name", "By notes only"])
 
-        mode = st.radio("Choose input type:",["By perfume name","By notes only"])
-
-        perfume_name=""
-        brand_name=""
-
+        perfume_name = ""
+        brand_name = ""
         if mode == "By perfume name":
-            perfume_name = st.text_input("Perfume name")
-            brand_name = st.text_input("Brand")
+            perfume_name = st.text_input("Perfume name (e.g., Nina)")
+            brand_name = st.text_input("Brand (optional)")
 
-        notes_text = st.text_input("Desired notes")
+        notes_text = st.text_input("Desired notes (comma-separated)")
 
         st.subheader("Filters (optional)")
-
         family_filter = st.text_input("Olfactory family contains")
-
-        gender_choice = st.selectbox(
-            "Gender preference",
-            ["Any","Women (F)","Men (M)","Unisex (U)"]
-        )
-
-        top_n = st.slider("How many recommendations?",1,5,3)
+        gender_choice = st.selectbox("Gender preference", ["Any", "Women (F)", "Men (M)", "Unisex (U)"])
+        top_n = st.slider("How many recommendations?", 1, 5, 3)
 
         search_clicked = st.form_submit_button("Search")
 
 
-# =========================================================
-# RESULTS
-# =========================================================
-
 with right:
-
     st.subheader("My Recommendations")
+
+    st.info(
+        """
+**How to read the match score:**
+
+- **7.0–10.0** → Excellent match — You'll love this one!  
+- **5.0–6.9** → Good match, give it a try  
+- **3.0–4.9** → Quite different, but some similar notes
+        """
+    )
 
     direct_matches_box = st.container()
 
     if not search_clicked:
-
-        st.info("Click Search to run recommendations.")
-
+        st.info("Click **Search** to run recommendations.")
     else:
+        # -------------------------------------------------
+        # 1) Build query notes (from user text first)
+        # -------------------------------------------------
+        raw_notes = normalize_notes_list(split_notes(notes_text))
+        query_notes = set(raw_notes)
 
-        raw = split_notes(notes_text)
+        used_pyramid = False
+        query_top, query_heart, query_base = set(), set(), set()
 
-        query_notes = set(raw)
+        # -------------------------------------------------
+        # 2) Find direct Chogan inspiration matches (if name search)
+        # -------------------------------------------------
+        direct_hits = chogan.iloc[0:0]
+        if mode == "By perfume name" and perfume_name.strip():
+            q = perfume_name.strip().lower()
+            direct_hits = chogan[chogan["Inspiration"].fillna("").astype(str).str.lower().str.contains(q, na=False)]
 
-        direct_hits = chogan[
-            chogan["Inspiration"].str.lower().str.contains(perfume_name.lower(),na=False)
-        ] if perfume_name else pd.DataFrame()
+            if brand_name.strip() and len(direct_hits) > 1:
+                bq = brand_name.strip().lower()
+                direct_hits = direct_hits[
+                    direct_hits["Inspiration"].fillna("").astype(str).str.lower().str.contains(bq, na=False)
+                ]
 
-
-        # =========================================================
-        # DIRECT MATCH
-        # =========================================================
-
+        # Render direct hits on RIGHT
         with direct_matches_box:
-
             if len(direct_hits) > 0:
-
-                st.success(f"Direct match found ({len(direct_hits)})")
-
-                for rank,(_,hit) in enumerate(direct_hits.iterrows(),start=1):
-
-                    st.markdown(f"### ✅ Direct match #{rank} — {hit['Perfume reference']}")
-                    st.write(f"Inspiration: *{hit['Inspiration']}*")
-                    st.write(f"Top: {hit['Top Notes']}")
-                    st.write(f"Heart: {hit['Heart Notes']}")
-                    st.write(f"Base: {hit['Base Notes']}")
+                st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
+                for rank, (_, hit) in enumerate(direct_hits.head(top_n).iterrows(), start=1):
+                    ref = (
+                        hit.get("Perfume reference")
+                        or hit.get("Perfume ref.")
+                        or hit.get("Reference")
+                        or hit.get("Code")
+                        or hit.get("ID")
+                        or ""
+                    )
+                    st.markdown(f"### ✅ Direct match #{rank} — **{ref}**")
+                    st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
+                    st.write(f"Top: {hit.get('Top Notes','')}")
+                    st.write(f"Heart: {hit.get('Heart Notes','')}")
+                    st.write(f"Base: {hit.get('Base Notes','')}")
                     st.divider()
 
+        # -------------------------------------------------
+        # 3) Use external sheet notes if the perfume is in external db
+        #    (this is what makes external perfumes work again)
+        # -------------------------------------------------
+        used_external = None
+        if mode == "By perfume name" and perfume_name.strip() and not external.empty:
+            mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
+            matches = external[mask]
 
-        # =========================================================
-        # USE DIRECT MATCH NOTES AS SEED
-        # =========================================================
+            if brand_name.strip() and len(matches) > 1:
+                bmask = matches["Brand"].fillna("").astype(str).str.lower().str.contains(brand_name.strip().lower(), na=False)
+                matches = matches[bmask]
 
-        if len(direct_hits) > 0 and not query_notes:
+            if len(matches) > 0:
+                used_external = matches.iloc[0].to_dict()
 
-            seed = direct_hits.iloc[0]
+                etop = set(normalize_notes_list(split_notes(used_external.get("Top Notes", ""))))
+                ehe = set(normalize_notes_list(split_notes(used_external.get("Heart Notes", ""))))
+                eba = set(normalize_notes_list(split_notes(used_external.get("Base Notes", ""))))
 
-            query_notes = set(
-                split_notes(seed["Top Notes"]) +
-                split_notes(seed["Heart Notes"]) +
-                split_notes(seed["Base Notes"])
-            )
+                if etop or ehe or eba:
+                    # Pyramid available -> activate pyramid weighting
+                    query_top, query_heart, query_base = etop, ehe, eba
+                    used_pyramid = True
+                    query_notes |= (etop | ehe | eba)
+                else:
+                    # Fallback: all notes
+                    eall = set(normalize_notes_list(split_notes(used_external.get("All Notes", ""))))
+                    query_notes |= eall
+                    used_pyramid = False
+
+                st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
+
+        # -------------------------------------------------
+        # 4) If no typed notes and no external match,
+        #    seed from direct hit notes (still gives recommendations)
+        # -------------------------------------------------
+        if (not query_notes) and len(direct_hits) > 0:
+            seed = direct_hits.iloc[0].to_dict()
 
             st.info("Using the direct match notes to generate secondary recommendations.")
 
+            qtop = set(normalize_notes_list(split_notes(seed.get("Top Notes", ""))))
+            qhe = set(normalize_notes_list(split_notes(seed.get("Heart Notes", ""))))
+            qba = set(normalize_notes_list(split_notes(seed.get("Base Notes", ""))))
 
-        # =========================================================
-        # RECOMMENDATIONS
-        # =========================================================
+            if qtop or qhe or qba:
+                query_top, query_heart, query_base = qtop, qhe, qba
+                used_pyramid = True
+                query_notes |= (qtop | qhe | qba)
+            else:
+                # If the dataset doesn't have pyramid, just use what it has
+                query_notes |= set(normalize_notes_list(split_notes(seed.get("All Notes", ""))))
+                used_pyramid = False
 
-        results = []
+        # -------------------------------------------------
+        # 5) Apply filters to Chogan catalog
+        # -------------------------------------------------
+        filtered = chogan.copy()
 
-        for _,row in chogan.iterrows():
+        if family_filter.strip() and "Olfactory Family" in filtered.columns:
+            filtered = filtered[
+                filtered["Olfactory Family"].fillna("").astype(str).str.lower().str.contains(family_filter.strip().lower(), na=False)
+            ]
 
-            score = score_perfume(query_notes,row)
+        if "Gender" in filtered.columns:
+            g = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
+            if gender_choice == "Women (F)":
+                filtered = filtered[g == "F"]
+            elif gender_choice == "Men (M)":
+                filtered = filtered[g == "M"]
+            elif gender_choice == "Unisex (U)":
+                filtered = filtered[g == "U"]
 
-            results.append((score,row))
+        # -------------------------------------------------
+        # 6) Score & show recommendations
+        #    IMPORTANT: Even if direct hits exist, we STILL show secondary recs.
+        #    We just avoid repeating the same direct-hit items.
+        # -------------------------------------------------
+        if not query_notes and not used_pyramid:
+            st.warning("Add some notes, or search a perfume name that exists in your external database.")
+        else:
+            direct_refs = set()
+            if len(direct_hits) > 0:
+                for _, hit in direct_hits.iterrows():
+                    ref = (
+                        hit.get("Perfume reference")
+                        or hit.get("Perfume ref.")
+                        or hit.get("Reference")
+                        or hit.get("Code")
+                        or hit.get("ID")
+                        or ""
+                    )
+                    direct_refs.add(str(ref).strip().lower())
 
-        results.sort(reverse=True,key=lambda x:x[0])
+            results = []
+            for _, row in filtered.iterrows():
+                # Skip showing exact same direct-hit reference in secondary list
+                ref = (
+                    row.get("Perfume reference")
+                    or row.get("Perfume ref.")
+                    or row.get("Reference")
+                    or row.get("Code")
+                    or row.get("ID")
+                    or ""
+                )
+                if str(ref).strip().lower() in direct_refs:
+                    continue
 
-        shown = 0
+                score = score_perfume(
+                    query_notes=query_notes,
+                    row=row,
+                    used_pyramid=used_pyramid,
+                    query_top=query_top,
+                    query_heart=query_heart,
+                    query_base=query_base,
+                )
 
-        for score,row in results:
+                # Optional: name similarity boost (helps “Rouge”, partial names, etc.)
+                if mode == "By perfume name" and perfume_name.strip():
+                    sim = name_similarity(perfume_name, str(row.get("Inspiration", "")))
+                    if sim > 0.85:
+                        score = min(score + 1.5, 10.0)
+                    elif sim > 0.70:
+                        score = min(score + 0.8, 10.0)
 
-            if score < MIN_SCORE_TO_SHOW:
-                continue
+                results.append((score, row))
 
-            if perfume_name.lower() in str(row["Inspiration"]).lower():
-                continue
+            results.sort(key=lambda x: x[0], reverse=True)
 
-            shown += 1
+            shown = 0
+            for score, row in results:
+                if score < MIN_SCORE_TO_SHOW:
+                    continue
 
-            st.markdown(f"### #{shown} — {row['Perfume reference']}")
-            st.write(f"Inspiration: *{row['Inspiration']}*")
-            st.write(f"Match score: {score:.2f}/10")
-            st.write(f"Top: {row['Top Notes']}")
-            st.write(f"Heart: {row['Heart Notes']}")
-            st.write(f"Base: {row['Base Notes']}")
-            st.divider()
+                shown += 1
+                ref = (
+                    row.get("Perfume reference")
+                    or row.get("Perfume ref.")
+                    or row.get("Reference")
+                    or row.get("Code")
+                    or row.get("ID")
+                    or ""
+                )
 
-            if shown >= top_n:
-                break
+                st.markdown(f"### #{shown} — **{ref}**")
+                st.write(f"Inspiration: *{row.get('Inspiration','')}*")
+                st.write(f"**Match score:** {score:.2f} / 10")
+
+                st.write(f"Top: {row.get('Top Notes','')}")
+                st.write(f"Heart: {row.get('Heart Notes','')}")
+                st.write(f"Base: {row.get('Base Notes','')}")
+                st.divider()
+
+                if shown >= top_n:
+                    break
+
+            if shown == 0:
+                st.warning(
+                    "Sorry, we don't have a good match for the notes in the perfume you are looking for. "
+                    "Would you like to try something else?"
+                )
 
 
 # =========================================================
@@ -407,14 +571,13 @@ with right:
 st.subheader("Add / Update an External Perfume (manual entry)")
 
 with st.form("add_external", clear_on_submit=True):
-
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
 
     with c1:
         new_perfume = st.text_input("Perfume")
         new_brand = st.text_input("Brand")
         new_family = st.text_input("Olfactory Family")
-        new_gender = st.selectbox("Gender",["","F","M","U"])
+        new_gender = st.selectbox("Gender", ["", "F", "M", "U"])
 
     with c2:
         new_top = st.text_input("Top Notes")
@@ -425,26 +588,25 @@ with st.form("add_external", clear_on_submit=True):
     submitted = st.form_submit_button("Save external perfume")
 
 if submitted:
-
-    if not new_perfume:
-        st.error("Perfume name required")
-
+    if not new_perfume.strip():
+        st.error("Perfume name required.")
+    elif external_ws is None:
+        st.error("Google Sheets not connected. Fix the error above first.")
     else:
-
-        row = {
-            "Perfume": new_perfume,
-            "Brand": new_brand,
-            "Gender": new_gender,
-            "Top Notes": new_top,
-            "Heart Notes": new_heart,
-            "Base Notes": new_base,
-            "All Notes": new_all,
-            "Olfactory Family": new_family,
+        row_dict = {
+            "Perfume": new_perfume.strip(),
+            "Brand": new_brand.strip(),
+            "Gender": new_gender.strip(),
+            "Top Notes": new_top.strip(),
+            "Heart Notes": new_heart.strip(),
+            "Base Notes": new_base.strip(),
+            "All Notes": new_all.strip(),
+            "Olfactory Family": new_family.strip(),
         }
 
-        upsert_external_to_sheets(external_ws,row)
-
-        st.success("Saved")
+        upsert_external_to_sheets(external_ws, row_dict)
+        st.success("Saved.")
+        st.rerun()
 
 with st.expander("View saved external perfumes"):
     st.dataframe(external.tail(50))
