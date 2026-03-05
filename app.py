@@ -261,7 +261,7 @@ PILLARS = {
         "bergamot", "lemon", "lime", "orange", "mandarin", "tangerine",
         "grapefruit", "pomelo", "yuzu", "citron", "blood orange",
         "orange zest", "lemon zest", "citrus", "citric",
-        "neroli", "petitgrain",
+        "neroli", "petitgrain", "blood orange", "blood grapefruit", "caipirinha lime",
     },
     "floral": {
         "rose", "black rose", "jasmine", "tuberose", "orange blossom", "peony",
@@ -269,7 +269,7 @@ PILLARS = {
     },
     "gourmand": {
         "vanilla", "praline", "caramel", "coffee", "tonka", "chocolate",
-        "benzoin", "toffee", "cocoa", "honey",
+        "benzoin", "toffee", "cocoa", "honey","rum", "cacao", "toffee apple", 
     },
     "woody": {
         "patchouli", "cedar", "sandalwood", "vetiver", "moss", "oakmoss",
