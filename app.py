@@ -15,7 +15,6 @@ st.set_page_config(page_title="Find your Chogan Perfume", layout="wide")
 # =========================================================
 # CONFIG
 # =========================================================
-
 EXPECTED_EXTERNAL_COLS = [
     "Perfume",
     "Brand",
@@ -27,16 +26,14 @@ EXPECTED_EXTERNAL_COLS = [
     "Olfactory Family",
 ]
 
-# Scoring blend
 NOTE_WEIGHT = 0.70
 VIBE_WEIGHT = 0.30
-DNA_BOOST = 0.7  # adds 0.7/10 when pillars overlap strongly
+DNA_BOOST = 0.7
 MIN_SCORE_TO_SHOW = 3.0
 
 # =========================================================
 # GOOGLE SHEETS
 # =========================================================
-
 @st.cache_resource
 def get_gs_client():
     creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
@@ -81,7 +78,6 @@ def upsert_external_to_sheets(ws, row_dict):
     ensure_external_headers(ws)
 
     records = ws.get_all_records()
-
     key_perfume = row_dict.get("Perfume", "").strip().lower()
     key_brand = row_dict.get("Brand", "").strip().lower()
 
@@ -100,11 +96,9 @@ def upsert_external_to_sheets(ws, row_dict):
     else:
         ws.append_row(values)
 
-
 # =========================================================
 # TEXT NORMALIZATION
 # =========================================================
-
 def strip_accents(s):
     s = unicodedata.normalize("NFKD", str(s))
     return "".join(c for c in s if not unicodedata.combining(c))
@@ -127,11 +121,9 @@ def name_similarity(a, b):
     jac = len(ta & tb) / len(ta | tb) if (ta or tb) else 0.0
     return (fuzz + jac) / 2.0
 
-
 # =========================================================
 # NOTES HELPERS
 # =========================================================
-
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
         return []
@@ -146,11 +138,9 @@ def normalize_note(n):
 def normalize_notes_list(lst):
     return [normalize_note(x) for x in lst if str(x).strip()]
 
-
 # =========================================================
 # PILLARS (VIBE)
 # =========================================================
-
 PILLARS = {
     "fruity": {
         "pear","raspberry","strawberry","lychee","blackcurrant","currant","peach","plum",
@@ -188,11 +178,9 @@ def penalties(query_pillars, perfume_pillars):
         pen -= 1.0
     return pen
 
-
 # =========================================================
 # SCORING (PYRAMID + VIBE)
 # =========================================================
-
 def get_row_note_sets(row):
     top = set(normalize_notes_list(split_notes(row.get("Top Notes", ""))))
     heart = set(normalize_notes_list(split_notes(row.get("Heart Notes", ""))))
@@ -278,11 +266,9 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 
     return score10, matched_notes, matched_pillars
 
-
 # =========================================================
-# UI HELPERS (Score card + pills)
+# UI HELPERS (Score key + cards + pills)
 # =========================================================
-
 def score_label(score_10: float) -> str:
     if score_10 >= 7.0:
         return "Excellent match"
@@ -293,34 +279,71 @@ def score_label(score_10: float) -> str:
     return "Low match"
 
 
-def score_color(score_10: float) -> str:
-    # Requested colors:
-    # - Excellent match -> green
-    # - Good match -> light blue
-    # - Worth a try -> light yellow
-    # - Low match -> grey
+def score_badge_bg(score_10: float) -> str:
     if score_10 >= 7.0:
         return "#16a34a"  # green
     if score_10 >= 5.0:
         return "#60a5fa"  # light blue
     if score_10 >= 3.0:
         return "#fde68a"  # light yellow
-    return "#9ca3af"      # grey
+    return "#9ca3af"      # gray
 
 
-def score_text_color(score_10: float) -> str:
-    # Ensure readability on light yellow
+def score_badge_text(score_10: float) -> str:
     if 3.0 <= score_10 < 5.0:
         return "#111827"
     return "#ffffff"
 
 
-def pill_box_html(title: str, items: list[str]) -> str:
-    safe_items = [str(x) for x in items if str(x).strip()]
-    if not safe_items:
-        safe_items = ["None"]
+def score_key_card():
+    st.markdown(
+        """
+        <div style="border:1px solid #e5e7eb; border-radius:16px; padding:14px; margin:0 0 12px 0; background:#ffffff;">
+          <div style="font-weight:800; font-size:1.05rem; margin-bottom:10px;">How to read the match score</div>
+          <div style="display:flex; flex-wrap:wrap; gap:10px;">
+            <span style="padding:8px 12px; border-radius:999px; background:#16a34a; color:#fff; font-weight:800;">
+              7.0–10.0 — Excellent match
+            </span>
+            <span style="padding:8px 12px; border-radius:999px; background:#60a5fa; color:#fff; font-weight:800;">
+              5.0–6.9 — Good match
+            </span>
+            <span style="padding:8px 12px; border-radius:999px; background:#fde68a; color:#111827; font-weight:800;">
+              3.0–4.9 — Worth a try
+            </span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    pills_html = "".join(
+
+def score_card(score_10: float):
+    bg = score_badge_bg(score_10)
+    tc = score_badge_text(score_10)
+    label = score_label(score_10)
+
+    st.markdown(
+        f"""
+        <div style="border:1px solid #e5e7eb; border-radius:16px; padding:14px; margin:10px 0 8px 0; background:#ffffff;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+            <div style="font-weight:900; font-size:1.45rem;">
+              Match score: <span style="font-size:2.0rem; font-weight:1000;">{score_10:.2f}</span> / 10
+            </div>
+            <div style="padding:8px 12px; border-radius:999px; font-weight:900; color:{tc}; background:{bg}; white-space:nowrap;">
+              {label}
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def pills_html(items: list[str]) -> str:
+    if not items:
+        items = ["None"]
+    # plain gray pills (no score color)
+    return "".join(
         f"""
         <span style="
             display:inline-block;
@@ -328,116 +351,39 @@ def pill_box_html(title: str, items: list[str]) -> str:
             margin:4px 6px 0 0;
             border-radius:999px;
             border:1px solid #e5e7eb;
-            background:#f9fafb;
+            background:#f3f4f6;
+            color:#111827;
             font-size:0.9rem;
             line-height:1;
-        ">{p}</span>
+        ">{st._utils.escape_html(str(p))}</span>
         """
-        for p in safe_items
+        for p in items
     )
 
-    return f"""
-    <div style="
-        border:1px solid #e5e7eb;
-        background:#ffffff;
-        border-radius:14px;
-        padding:12px 12px 10px 12px;
-        margin:10px 0 0 0;
-    ">
-        <div style="font-weight:700; margin-bottom:6px;">{title}</div>
-        <div>{pills_html}</div>
-    </div>
-    """
 
-
-def matched_boxes_row(matched_notes: list[str], matched_pillars: list[str], color_hex: str) -> None:
-    # Two boxes side-by-side, sharing the SAME left color accent (like matched accords previously)
-    left = pill_box_html("Matched notes", matched_notes)
-    right = pill_box_html("Matched accords", matched_pillars)
+def matched_boxes_row(matched_notes: list[str], matched_pillars: list[str]) -> None:
+    notes_pills = pills_html(matched_notes)
+    pillars_pills = pills_html(matched_pillars)
 
     st.markdown(
         f"""
-        <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:6px;">
-            <div style="flex:1; min-width:260px; border-left:6px solid {color_hex}; border-radius:14px;">
-                {left}
-            </div>
-            <div style="flex:1; min-width:260px; border-left:6px solid {color_hex}; border-radius:14px;">
-                {right}
-            </div>
+        <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:8px;">
+          <div style="flex:1; min-width:260px; border:1px solid #e5e7eb; background:#ffffff; border-radius:14px; padding:12px;">
+            <div style="font-weight:800; margin-bottom:6px;">Matched notes</div>
+            <div>{notes_pills}</div>
+          </div>
+          <div style="flex:1; min-width:260px; border:1px solid #e5e7eb; background:#ffffff; border-radius:14px; padding:12px;">
+            <div style="font-weight:800; margin-bottom:6px;">Matched accords</div>
+            <div>{pillars_pills}</div>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-
-def score_key_card() -> None:
-    # Always visible at top of recommendations
-    st.markdown(
-        f"""
-        <div style="
-            border:1px solid #e5e7eb;
-            border-radius:16px;
-            padding:14px 14px;
-            margin:0 0 12px 0;
-            background:#ffffff;
-        ">
-            <div style="font-weight:800; font-size:1.05rem; margin-bottom:10px;">
-                How to read the match score
-            </div>
-            <div style="display:flex; flex-wrap:wrap; gap:10px;">
-                <span style="padding:8px 12px; border-radius:999px; background:#16a34a; color:#fff; font-weight:800;">
-                    7.0–10.0 — Excellent match
-                </span>
-                <span style="padding:8px 12px; border-radius:999px; background:#60a5fa; color:#fff; font-weight:800;">
-                    5.0–6.9 — Good match
-                </span>
-                <span style="padding:8px 12px; border-radius:999px; background:#fde68a; color:#111827; font-weight:800;">
-                    3.0–4.9 — Worth a try
-                </span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def score_card(score_10: float) -> None:
-    c = score_color(score_10)
-    label = score_label(score_10)
-    text_c = score_text_color(score_10)
-
-    st.markdown(
-        f"""
-        <div style="
-            border:1px solid #e5e7eb;
-            border-radius:16px;
-            padding:14px 14px;
-            margin:10px 0 8px 0;
-            background:#ffffff;
-        ">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-                <div style="font-weight:900; font-size:1.45rem;">
-                    Match score: <span style="font-size:2.0rem; font-weight:1000;">{score_10:.2f}</span> / 10
-                </div>
-                <div style="
-                    padding:8px 12px;
-                    border-radius:999px;
-                    font-weight:900;
-                    color:{text_c};
-                    background:{c};
-                    white-space:nowrap;
-                ">{label}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
 
 # =========================================================
 # DATA LOAD
 # =========================================================
-
 @st.cache_data
 def load_chogan_csv(path):
     return pd.read_csv(path)
@@ -455,16 +401,11 @@ except Exception as e:
     external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
     external_ws = None
 
-
 # =========================================================
-# APP (2 tabs)
+# APP
 # =========================================================
-
 tab_search, tab_add = st.tabs(["Search", "Add a new perfume to the database"])
 
-# =========================================================
-# SEARCH TAB
-# =========================================================
 with tab_search:
     st.title("Find your Chogan Perfume")
 
@@ -502,21 +443,19 @@ with tab_search:
 
     with right:
         st.subheader("My Recommendations")
-
-        # ✅ Always show the score key card at the top
-        score_key_card()
+        score_key_card()  # always visible at top
 
         if not search_clicked:
             st.info("Click **Search** to run recommendations.")
         else:
-            # 1) Build query notes from typed notes
+            # 1) query notes from typed notes
             raw_notes = normalize_notes_list(split_notes(notes_text))
             query_notes = set(raw_notes)
 
             used_pyramid = False
             query_top, query_heart, query_base = set(), set(), set()
 
-            # 2) Exact matches in Chogan inspirations (for display only)
+            # 2) exact match display (chogan inspirations)
             direct_hits = chogan.iloc[0:0]
             if mode == "By perfume name" and perfume_name.strip():
                 q = perfume_name.strip().lower()
@@ -529,23 +468,23 @@ with tab_search:
 
             if len(direct_hits) > 0:
                 st.success(f"Exact match found in Chogan inspirations ({len(direct_hits)} result(s)).")
-                for _, hit in direct_hits.head(1).iterrows():
-                    ref = (
-                        hit.get("Perfume reference")
-                        or hit.get("Perfume ref.")
-                        or hit.get("Reference")
-                        or hit.get("Code")
-                        or hit.get("ID")
-                        or ""
-                    )
-                    st.markdown(f"### ✅ Exact match — **{ref}**")
-                    st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
-                    st.write(f"Top: {hit.get('Top Notes','')}")
-                    st.write(f"Heart: {hit.get('Heart Notes','')}")
-                    st.write(f"Base: {hit.get('Base Notes','')}")
-                    st.divider()
+                hit = direct_hits.iloc[0]
+                ref = (
+                    hit.get("Perfume reference")
+                    or hit.get("Perfume ref.")
+                    or hit.get("Reference")
+                    or hit.get("Code")
+                    or hit.get("ID")
+                    or ""
+                )
+                st.markdown(f"### ✅ Exact match — **{ref}**")
+                st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
+                st.write(f"Top: {hit.get('Top Notes','')}")
+                st.write(f"Heart: {hit.get('Heart Notes','')}")
+                st.write(f"Base: {hit.get('Base Notes','')}")
+                st.divider()
 
-            # 3) Pull notes from external DB (pyramid if available)
+            # 3) use external DB notes if available
             if mode == "By perfume name" and perfume_name.strip() and not external.empty:
                 mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
                 matches = external[mask]
@@ -571,7 +510,7 @@ with tab_search:
 
                     st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
 
-            # 4) If still no notes, seed from exact match notes
+            # 4) if no notes, seed from exact match notes
             if (not query_notes) and len(direct_hits) > 0:
                 seed = direct_hits.iloc[0].to_dict()
                 st.info("Using the exact match notes to generate recommendations.")
@@ -588,7 +527,7 @@ with tab_search:
                     query_notes |= set(normalize_notes_list(split_notes(seed.get("All Notes", ""))))
                     used_pyramid = False
 
-            # 5) Gender filter (robust)
+            # 5) gender filter
             filtered = chogan.copy()
             if "Gender" in filtered.columns:
                 g_raw = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
@@ -622,11 +561,10 @@ with tab_search:
                 elif gender_choice == "Men or Unisex (M/U)":
                     filtered = filtered[g.isin(["M", "U", "M/U"])]
 
-            # 6) Score & show recommendations (always)
+            # 6) score + show
             if not query_notes and not used_pyramid:
                 st.warning("Add some notes, or search a perfume name that exists in your external database.")
             else:
-                # Avoid duplicating exact match refs in the list
                 direct_refs = set()
                 if len(direct_hits) > 0:
                     for _, hit in direct_hits.iterrows():
@@ -691,12 +629,8 @@ with tab_search:
                     st.markdown(f"### #{shown} — **{ref}**")
                     st.write(f"Inspiration: *{row.get('Inspiration','')}*")
 
-                    # Score card per recommendation
                     score_card(score)
-
-                    # Matched notes + accords horizontally
-                    c = score_color(score)
-                    matched_boxes_row(matched_notes, matched_pillars, color_hex=c)
+                    matched_boxes_row(matched_notes, matched_pillars)
 
                     st.write(f"Top: {row.get('Top Notes','')}")
                     st.write(f"Heart: {row.get('Heart Notes','')}")
@@ -712,9 +646,6 @@ with tab_search:
                         "Would you like to try something else?"
                     )
 
-# =========================================================
-# ADD TAB
-# =========================================================
 with tab_add:
     st.subheader("Add / Update an External Perfume (manual entry)")
 
@@ -751,7 +682,6 @@ with tab_add:
                 "All Notes": new_all.strip(),
                 "Olfactory Family": new_family.strip(),
             }
-
             upsert_external_to_sheets(external_ws, row_dict)
             st.success("Saved.")
             st.rerun()
