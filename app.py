@@ -114,12 +114,75 @@ def norm_text(s):
 def name_similarity(a, b):
     a = norm_text(a)
     b = norm_text(b)
-
     fuzz = SequenceMatcher(None, a, b).ratio()
     ta = set(a.split())
     tb = set(b.split())
     jac = len(ta & tb) / len(ta | tb) if (ta or tb) else 0.0
     return (fuzz + jac) / 2.0
+
+
+def extract_perfume_name_from_inspiration(insp: str) -> str:
+    """
+    Inspiration strings often look like:
+    "Good Girl - Carolina Herrera"
+    "Good Girl Gone Bad – Kilian"
+    We take the left side as the perfume name.
+    """
+    s = str(insp or "")
+    # split on common separators
+    parts = re.split(r"\s[-–—]\s", s, maxsplit=1)
+    left = parts[0] if parts else s
+    return left.strip()
+
+
+def find_inspiration_matches(chogan_df: pd.DataFrame, perfume_query: str, brand_query: str = ""):
+    """
+    Returns two dataframes:
+      - exact_hits: perfume name (left side of Inspiration) == query (normalized)
+      - also_hits: word-boundary contains OR high similarity (useful for "Good Girl Gone Bad")
+    Brand query is optional; if provided, it narrows results.
+    """
+    if chogan_df.empty or "Inspiration" not in chogan_df.columns:
+        return chogan_df.iloc[0:0], chogan_df.iloc[0:0]
+
+    q = norm_text(perfume_query)
+    if not q:
+        return chogan_df.iloc[0:0], chogan_df.iloc[0:0]
+
+    bq = norm_text(brand_query) if brand_query else ""
+
+    exact_rows = []
+    also_rows = []
+
+    # word boundary regex for safer "contains"
+    pat = re.compile(rf"\b{re.escape(q)}\b", re.IGNORECASE)
+
+    for idx, row in chogan_df.iterrows():
+        insp = str(row.get("Inspiration", "") or "")
+        insp_norm = norm_text(insp)
+
+        if bq and bq not in insp_norm:
+            continue
+
+        left_name = extract_perfume_name_from_inspiration(insp)
+        left_norm = norm_text(left_name)
+
+        if left_norm == q:
+            exact_rows.append(idx)
+            continue
+
+        # "also matches": word-boundary contains in the perfume-name part OR high similarity
+        if pat.search(left_norm) or name_similarity(q, left_norm) >= 0.78:
+            also_rows.append(idx)
+
+    exact_hits = chogan_df.loc[exact_rows] if exact_rows else chogan_df.iloc[0:0]
+    also_hits = chogan_df.loc[also_rows] if also_rows else chogan_df.iloc[0:0]
+
+    # avoid duplicates between exact and also
+    if not exact_hits.empty and not also_hits.empty:
+        also_hits = also_hits[~also_hits.index.isin(exact_hits.index)]
+
+    return exact_hits, also_hits
 
 # =========================================================
 # NOTES HELPERS
@@ -199,7 +262,6 @@ def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart
         return 0.0
 
     s = 0.0
-
     for n in q_top:
         if n in perf_top:
             s += 2.0
@@ -286,7 +348,7 @@ def score_badge_bg(score_10: float) -> str:
         return "#60a5fa"  # light blue
     if score_10 >= 3.0:
         return "#fde68a"  # light yellow
-    return "#9ca3af"      # gray
+    return "#9ca3af"
 
 
 def score_badge_text(score_10: float) -> str:
@@ -406,48 +468,68 @@ with tab_search:
 
     with right:
         st.subheader("My Recommendations")
-        score_key_card()  # always visible at top
+        score_key_card()
 
         if not search_clicked:
             st.info("Click **Search** to run recommendations.")
         else:
-            # 1) typed notes
             raw_notes = normalize_notes_list(split_notes(notes_text))
             query_notes = set(raw_notes)
 
             used_pyramid = False
             query_top, query_heart, query_base = set(), set(), set()
 
-            # 2) exact match (inspiration)
-            direct_hits = chogan.iloc[0:0]
+            exact_hits = chogan.iloc[0:0]
+            also_hits = chogan.iloc[0:0]
+
             if mode == "By perfume name" and perfume_name.strip():
-                q = perfume_name.strip().lower()
-                direct_hits = chogan[chogan["Inspiration"].fillna("").astype(str).str.lower().str.contains(q, na=False)]
-                if brand_name.strip() and len(direct_hits) > 1:
-                    bq = brand_name.strip().lower()
-                    direct_hits = direct_hits[
-                        direct_hits["Inspiration"].fillna("").astype(str).str.lower().str.contains(bq, na=False)
-                    ]
+                exact_hits, also_hits = find_inspiration_matches(chogan, perfume_name, brand_name)
 
-            if len(direct_hits) > 0:
-                st.success(f"Exact match found in Chogan inspirations ({len(direct_hits)} result(s)).")
-                hit = direct_hits.iloc[0]
-                ref = (
-                    hit.get("Perfume reference")
-                    or hit.get("Perfume ref.")
-                    or hit.get("Reference")
-                    or hit.get("Code")
-                    or hit.get("ID")
-                    or ""
-                )
-                st.markdown(f"### ✅ Exact match — **{ref}**")
-                st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
-                st.write(f"Top: {hit.get('Top Notes','')}")
-                st.write(f"Heart: {hit.get('Heart Notes','')}")
-                st.write(f"Base: {hit.get('Base Notes','')}")
-                st.divider()
+            # === EXACT MATCH AREA (NOW SHOWS BOTH GROUPS) ===
+            if len(exact_hits) > 0 or len(also_hits) > 0:
+                total = len(exact_hits) + len(also_hits)
+                st.success(f"Matches found in Chogan inspirations ({total} result(s)).")
 
-            # 3) external DB notes
+                if len(exact_hits) > 0:
+                    for rank, (_, hit) in enumerate(exact_hits.head(top_n).iterrows(), start=1):
+                        ref = (
+                            hit.get("Perfume reference")
+                            or hit.get("Perfume ref.")
+                            or hit.get("Reference")
+                            or hit.get("Code")
+                            or hit.get("ID")
+                            or ""
+                        )
+                        st.markdown(f"### ✅ Exact match — **{ref}**")
+                        st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
+                        st.write(f"Top: {hit.get('Top Notes','')}")
+                        st.write(f"Heart: {hit.get('Heart Notes','')}")
+                        st.write(f"Base: {hit.get('Base Notes','')}")
+                        st.divider()
+
+                if len(also_hits) > 0:
+                    st.info("Also matches (similar name):")
+                    for rank, (_, hit) in enumerate(also_hits.head(top_n).iterrows(), start=1):
+                        ref = (
+                            hit.get("Perfume reference")
+                            or hit.get("Perfume ref.")
+                            or hit.get("Reference")
+                            or hit.get("Code")
+                            or hit.get("ID")
+                            or ""
+                        )
+                        st.markdown(f"### 🔎 Also matches — **{ref}**")
+                        st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
+                        st.write(f"Top: {hit.get('Top Notes','')}")
+                        st.write(f"Heart: {hit.get('Heart Notes','')}")
+                        st.write(f"Base: {hit.get('Base Notes','')}")
+                        st.divider()
+
+            # Prefer the best seed:
+            # 1) external notes
+            # 2) exact hit notes
+            # 3) also hit notes
+            used_external = None
             if mode == "By perfume name" and perfume_name.strip() and not external.empty:
                 mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
                 matches = external[mask]
@@ -473,24 +555,23 @@ with tab_search:
 
                     st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
 
-            # 4) seed from exact match if still no notes
-            if (not query_notes) and len(direct_hits) > 0:
-                seed = direct_hits.iloc[0].to_dict()
-                st.info("Using the exact match notes to generate recommendations.")
+            if (not query_notes) and (len(exact_hits) > 0 or len(also_hits) > 0):
+                seed_row = exact_hits.iloc[0].to_dict() if len(exact_hits) > 0 else also_hits.iloc[0].to_dict()
+                st.info("Using the best match notes to generate recommendations.")
 
-                qtop = set(normalize_notes_list(split_notes(seed.get("Top Notes", ""))))
-                qhe = set(normalize_notes_list(split_notes(seed.get("Heart Notes", ""))))
-                qba = set(normalize_notes_list(split_notes(seed.get("Base Notes", ""))))
+                qtop = set(normalize_notes_list(split_notes(seed_row.get("Top Notes", ""))))
+                qhe = set(normalize_notes_list(split_notes(seed_row.get("Heart Notes", ""))))
+                qba = set(normalize_notes_list(split_notes(seed_row.get("Base Notes", ""))))
 
                 if qtop or qhe or qba:
                     query_top, query_heart, query_base = qtop, qhe, qba
                     used_pyramid = True
                     query_notes |= (qtop | qhe | qba)
                 else:
-                    query_notes |= set(normalize_notes_list(split_notes(seed.get("All Notes", ""))))
+                    query_notes |= set(normalize_notes_list(split_notes(seed_row.get("All Notes", ""))))
                     used_pyramid = False
 
-            # 5) gender filter
+            # Gender filter
             filtered = chogan.copy()
             if "Gender" in filtered.columns:
                 g_raw = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
@@ -524,22 +605,24 @@ with tab_search:
                 elif gender_choice == "Men or Unisex (M/U)":
                     filtered = filtered[g.isin(["M", "U", "M/U"])]
 
-            # 6) recommendations
+            # Recommendations
             if not query_notes and not used_pyramid:
                 st.warning("Add some notes, or search a perfume name that exists in your external database.")
             else:
+                # Avoid duplicating exact-hit refs in recommendations list
                 direct_refs = set()
-                if len(direct_hits) > 0:
-                    for _, hit in direct_hits.iterrows():
-                        ref = (
-                            hit.get("Perfume reference")
-                            or hit.get("Perfume ref.")
-                            or hit.get("Reference")
-                            or hit.get("Code")
-                            or hit.get("ID")
-                            or ""
-                        )
-                        direct_refs.add(str(ref).strip().lower())
+                for df_hits in [exact_hits, also_hits]:
+                    if len(df_hits) > 0:
+                        for _, hit in df_hits.iterrows():
+                            ref = (
+                                hit.get("Perfume reference")
+                                or hit.get("Perfume ref.")
+                                or hit.get("Reference")
+                                or hit.get("Code")
+                                or hit.get("ID")
+                                or ""
+                            )
+                            direct_refs.add(str(ref).strip().lower())
 
                 results = []
                 for _, row in filtered.iterrows():
