@@ -484,6 +484,41 @@ with right:
             elif gender_choice == "Unisex (U)":
                 filtered = filtered[g == "U"]
 
+# --- Apply Gender Filter (robust) ---
+if "Gender" in filtered.columns:
+    g_raw = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
+
+    # Normalize messy values into F/M/U when possible
+    def norm_gender(val: str) -> str:
+        v = val.strip().upper()
+        if v in {"F", "M", "U"}:
+            return v
+        if "UNISEX" in v:
+            return "U"
+        if "WOM" in v or "FEM" in v:
+            return "F"
+        if "MEN" in v or "MASC" in v:
+            return "M"
+        # handle things like "F/U", "M/U"
+        if "F" in v and "U" in v:
+            return "F/U"
+        if "M" in v and "U" in v:
+            return "M/U"
+        return v
+
+    g = g_raw.apply(norm_gender)
+
+    if gender_choice == "Women (F)":
+        filtered = filtered[g.isin(["F", "F/U"])]
+    elif gender_choice == "Men (M)":
+        filtered = filtered[g.isin(["M", "M/U"])]
+    elif gender_choice == "Unisex (U)":
+        filtered = filtered[g.isin(["U", "F/U", "M/U"])]
+    elif gender_choice == "Women or Unisex (F/U)":
+        filtered = filtered[g.isin(["F", "U", "F/U"])]
+    elif gender_choice == "Men or Unisex (M/U)":
+        filtered = filtered[g.isin(["M", "U", "M/U"])]
+        
         # -------------------------------------------------
         # 6) Score & show recommendations
         #    IMPORTANT: Even if direct hits exist, we STILL show secondary recs.
