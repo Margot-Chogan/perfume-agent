@@ -182,7 +182,33 @@ def detect_pillars(notes):
 
     return found
 
+# =========================================================
+# NOTE RARITY WEIGHTS
+# (rare notes increase similarity impact)
+# =========================================================
 
+NOTE_RARITY = {
+    "coffee": 2.0,
+    "licorice": 2.2,
+    "incense": 1.9,
+    "praline": 1.6,
+    "caramel": 1.5,
+    "tonka": 1.4,
+    "benzoin": 1.4,
+    "patchouli": 1.3,
+    "tuberose": 1.3,
+    "datura": 1.3,
+    "ambroxan": 1.2,
+
+    # common notes (low weight)
+    "bergamot": 0.6,
+    "lemon": 0.6,
+    "orange": 0.6,
+    "musk": 0.7,
+    "vanilla": 0.8,
+    "rose": 0.9,
+    "jasmine": 0.9,
+}
 # =========================================================
 # ANCHOR COMBOS
 # =========================================================
@@ -221,9 +247,20 @@ def score_perfume(query_notes, row):
 
     perfume_notes = top | heart | base
 
-    note_overlap = len(query_notes & perfume_notes)
+    overlap = query_notes & perfume_notes
 
-    note_score = note_overlap / max(len(query_notes),1)
+    weighted_overlap = 0
+    total_weight = 0
+    
+    for note in query_notes:
+    
+        w = NOTE_RARITY.get(note,1.0)
+        total_weight += w
+    
+        if note in perfume_notes:
+            weighted_overlap += w
+    
+    note_score = weighted_overlap / max(total_weight,1)
 
     query_pillars = detect_pillars(query_notes)
     perfume_pillars = detect_pillars(perfume_notes)
