@@ -27,57 +27,11 @@ EXPECTED_EXTERNAL_COLS = [
     "Olfactory Family",
 ]
 
+# Scoring blend
 NOTE_WEIGHT = 0.70
 VIBE_WEIGHT = 0.30
-DNA_BOOST = 0.7
+DNA_BOOST = 0.7  # adds 0.7/10 when pillars overlap strongly
 MIN_SCORE_TO_SHOW = 3.0
-
-
-# =========================================================
-# VIEW STATE (Search vs Results)
-# =========================================================
-
-if "view" not in st.session_state:
-    st.session_state.view = "search"  # "search" or "results"
-if "last_payload_key" not in st.session_state:
-    st.session_state.last_payload_key = None
-if "cached_results" not in st.session_state:
-    st.session_state.cached_results = None
-if "scroll_nonce" not in st.session_state:
-    st.session_state.scroll_nonce = 0
-
-_defaults = {
-    "mode": "By perfume name",
-    "perfume_name": "",
-    "brand_name": "",
-    "notes_text": "",
-    "gender_choice": "Any",
-    "top_n": 3,
-    "mobile_mode": True,  # default ON; user can turn off
-}
-for k, v in _defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
-
-
-def reset_search():
-    for k, v in _defaults.items():
-        st.session_state[k] = v
-    st.session_state.view = "search"
-    st.session_state.last_payload_key = None
-    st.session_state.cached_results = None
-    st.session_state.scroll_nonce += 1
-
-
-def go_to_search():
-    st.session_state.view = "search"
-    st.session_state.scroll_nonce += 1
-
-
-def go_to_results():
-    st.session_state.view = "results"
-    st.session_state.scroll_nonce += 1
-
 
 # =========================================================
 # GOOGLE SHEETS
@@ -236,7 +190,7 @@ def penalties(query_pillars, perfume_pillars):
 
 
 # =========================================================
-# SCORING (PYRAMID + VIBE) + MATCH EXPLANATIONS
+# SCORING (PYRAMID + VIBE)
 # =========================================================
 
 def get_row_note_sets(row):
@@ -326,13 +280,106 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 
 
 # =========================================================
-# LOAD DATA
+# UI HELPERS (Score card + pills)
+# =========================================================
+
+def score_label(score_10: float) -> str:
+    if score_10 >= 7.0:
+        return "Excellent match"
+    if score_10 >= 5.0:
+        return "Good match"
+    if score_10 >= 3.0:
+        return "Worth a try"
+    return "Low match"
+
+
+def score_color(score_10: float) -> str:
+    if score_10 >= 7.0:
+        return "#16a34a"  # green
+    if score_10 >= 5.0:
+        return "#f59e0b"  # amber
+    if score_10 >= 3.0:
+        return "#fbbf24"  # yellow-ish amber
+    return "#9ca3af"      # grey
+
+
+def pill_box(title: str, items: list[str], color_hex: str) -> None:
+    safe_items = [str(x) for x in items if str(x).strip()]
+    if not safe_items:
+        safe_items = ["None"]
+
+    pills_html = "".join(
+        f"""
+        <span style="
+            display:inline-block;
+            padding:6px 10px;
+            margin:4px 6px 0 0;
+            border-radius:999px;
+            border:1px solid #e5e7eb;
+            background:#f9fafb;
+            font-size:0.9rem;
+            line-height:1;
+        ">{p}</span>
+        """
+        for p in safe_items
+    )
+
+    st.markdown(
+        f"""
+        <div style="
+            border:1px solid #e5e7eb;
+            background:#ffffff;
+            border-left:6px solid {color_hex};
+            border-radius:14px;
+            padding:12px 12px 10px 12px;
+            margin:10px 0 0 0;
+        ">
+            <div style="font-weight:700; margin-bottom:6px;">{title}</div>
+            <div>{pills_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def score_card(score_10: float) -> None:
+    c = score_color(score_10)
+    label = score_label(score_10)
+    st.markdown(
+        f"""
+        <div style="
+            border:1px solid #e5e7eb;
+            border-radius:16px;
+            padding:14px 14px;
+            margin:10px 0 8px 0;
+            background:#ffffff;
+        ">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                <div style="font-weight:800; font-size:1.35rem;">
+                    Match score: <span style="font-size:1.7rem; font-weight:900;">{score_10:.2f}</span> / 10
+                </div>
+                <div style="
+                    padding:8px 12px;
+                    border-radius:999px;
+                    font-weight:800;
+                    color:#ffffff;
+                    background:{c};
+                    white-space:nowrap;
+                ">{label}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# =========================================================
+# DATA LOAD
 # =========================================================
 
 @st.cache_data
 def load_chogan_csv(path):
     return pd.read_csv(path)
-
 
 try:
     chogan = load_chogan_csv("chogan_catalog.csv")
@@ -349,332 +396,35 @@ except Exception as e:
 
 
 # =========================================================
-# FILTERS (ROBUST GENDER)
+# APP (2 tabs)
 # =========================================================
-
-def norm_gender(val: str) -> str:
-    v = str(val).strip().upper()
-    if v in {"F", "M", "U"}:
-        return v
-    if "UNISEX" in v:
-        return "U"
-    if "WOM" in v or "FEM" in v:
-        return "F"
-    if "MEN" in v or "MASC" in v:
-        return "M"
-    if "F" in v and "U" in v:
-        return "F/U"
-    if "M" in v and "U" in v:
-        return "M/U"
-    return v
-
-
-def apply_gender_filter(df: pd.DataFrame, gender_choice: str) -> pd.DataFrame:
-    filtered = df.copy()
-    if "Gender" not in filtered.columns or gender_choice == "Any":
-        return filtered
-
-    g = filtered["Gender"].fillna("").astype(str).apply(norm_gender)
-
-    if gender_choice == "Women (F)":
-        return filtered[g.isin(["F", "F/U"])]
-    if gender_choice == "Men (M)":
-        return filtered[g.isin(["M", "M/U"])]
-    if gender_choice == "Unisex (U)":
-        return filtered[g.isin(["U", "F/U", "M/U"])]
-    if gender_choice == "Women or Unisex (F/U)":
-        return filtered[g.isin(["F", "U", "F/U"])]
-    if gender_choice == "Men or Unisex (M/U)":
-        return filtered[g.isin(["M", "U", "M/U"])]
-
-    return filtered
-
-
-# =========================================================
-# UI HELPERS (SCORE CARD + COLOR SCALE)
-# =========================================================
-
-def score_band(score: float) -> str:
-    if score >= 7.0:
-        return "great"
-    if score >= 5.0:
-        return "good"
-    return "ok"  # 3.0–4.9
-
-
-def band_color(band: str) -> str:
-    # amber / yellow / green
-    if band == "great":
-        return "#22c55e"  # green
-    if band == "good":
-        return "#fbbf24"  # yellow
-    return "#f59e0b"      # amber
-
-
-def score_card_top():
-    st.markdown(
-        """
-<div style="border:1px solid rgba(0,0,0,0.08); border-radius:14px; padding:12px 14px; margin-bottom:10px;">
-  <div style="font-weight:700; margin-bottom:8px;">Score key</div>
-  <div style="display:flex; gap:10px; flex-wrap:wrap;">
-    <div style="background:#22c55e; color:white; padding:6px 10px; border-radius:999px; font-weight:600;">7.0–10.0 · Excellent</div>
-    <div style="background:#fbbf24; color:black; padding:6px 10px; border-radius:999px; font-weight:600;">5.0–6.9 · Good</div>
-    <div style="background:#f59e0b; color:white; padding:6px 10px; border-radius:999px; font-weight:600;">3.0–4.9 · Some overlap</div>
-  </div>
-</div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def colored_note_chips(notes: list[str], score: float) -> str:
-    if not notes:
-        return "<span style='opacity:0.7;'>None</span>"
-
-    band = score_band(score)
-    bg = band_color(band)
-
-    chips = []
-    for n in notes:
-        n_esc = (
-            str(n)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
-        chips.append(
-            f"<span style='display:inline-block; background:{bg}; "
-            f"color:white; padding:4px 10px; border-radius:999px; "
-            f"margin:3px 6px 0 0; font-size:0.88rem; font-weight:600;'>{n_esc}</span>"
-        )
-    return "".join(chips)
-
-
-def colored_pillar_chips(pillars: list[str]) -> str:
-    if not pillars:
-        return "<span style='opacity:0.7;'>None</span>"
-
-    chips = []
-    for p in pillars:
-        p_esc = (
-            str(p)
-            .replace("&", "&amp;")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-        )
-        chips.append(
-            f"<span style='display:inline-block; background:rgba(0,0,0,0.06); "
-            f"color:rgba(0,0,0,0.75); padding:4px 10px; border-radius:999px; "
-            f"margin:3px 6px 0 0; font-size:0.88rem; font-weight:600;'>{p_esc}</span>"
-        )
-    return "".join(chips)
-
-
-# =========================================================
-# SEARCH / RECOMMENDATION PIPELINE
-# =========================================================
-
-def get_ref(row) -> str:
-    ref = (
-        row.get("Perfume reference")
-        or row.get("Perfume ref.")
-        or row.get("Reference")
-        or row.get("Code")
-        or row.get("ID")
-        or ""
-    )
-    return str(ref).strip()
-
-
-def current_payload() -> dict:
-    return {
-        "mode": st.session_state.mode,
-        "perfume_name": st.session_state.perfume_name,
-        "brand_name": st.session_state.brand_name,
-        "notes_text": st.session_state.notes_text,
-        "gender_choice": st.session_state.gender_choice,
-        "top_n": int(st.session_state.top_n),
-    }
-
-
-def payload_key(p: dict) -> str:
-    return json.dumps(p, sort_keys=True, ensure_ascii=False)
-
-
-def compute_results(payload: dict) -> dict:
-    mode = payload["mode"]
-    perfume_name = payload["perfume_name"]
-    brand_name = payload["brand_name"]
-    notes_text = payload["notes_text"]
-    gender_choice = payload["gender_choice"]
-    top_n = payload["top_n"]
-
-    raw_notes = normalize_notes_list(split_notes(notes_text))
-    query_notes = set(raw_notes)
-
-    used_pyramid = False
-    query_top, query_heart, query_base = set(), set(), set()
-
-    # 1) Direct hits only in "By perfume name"
-    direct_hits = chogan.iloc[0:0]
-    if mode == "By perfume name" and perfume_name.strip():
-        q = perfume_name.strip().lower()
-        direct_hits = chogan[
-            chogan["Inspiration"].fillna("").astype(str).str.lower().str.contains(q, na=False)
-        ]
-        if brand_name.strip() and len(direct_hits) > 1:
-            bq = brand_name.strip().lower()
-            direct_hits = direct_hits[
-                direct_hits["Inspiration"].fillna("").astype(str).str.lower().str.contains(bq, na=False)
-            ]
-
-    # 2) External notes only in "By perfume name"
-    used_external = None
-    if mode == "By perfume name" and perfume_name.strip() and not external.empty:
-        mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
-        matches = external[mask]
-
-        if brand_name.strip() and len(matches) > 1:
-            bmask = matches["Brand"].fillna("").astype(str).str.lower().str.contains(brand_name.strip().lower(), na=False)
-            matches = matches[bmask]
-
-        if len(matches) > 0:
-            used_external = matches.iloc[0].to_dict()
-
-            etop = set(normalize_notes_list(split_notes(used_external.get("Top Notes", ""))))
-            ehe = set(normalize_notes_list(split_notes(used_external.get("Heart Notes", ""))))
-            eba = set(normalize_notes_list(split_notes(used_external.get("Base Notes", ""))))
-
-            if etop or ehe or eba:
-                query_top, query_heart, query_base = etop, ehe, eba
-                used_pyramid = True
-                query_notes |= (etop | ehe | eba)
-            else:
-                eall = set(normalize_notes_list(split_notes(used_external.get("All Notes", ""))))
-                query_notes |= eall
-                used_pyramid = False
-
-    # 3) If no notes, seed from direct hit notes (still only relevant in name mode)
-    if (not query_notes) and len(direct_hits) > 0:
-        seed = direct_hits.iloc[0].to_dict()
-        qtop = set(normalize_notes_list(split_notes(seed.get("Top Notes", ""))))
-        qhe = set(normalize_notes_list(split_notes(seed.get("Heart Notes", ""))))
-        qba = set(normalize_notes_list(split_notes(seed.get("Base Notes", ""))))
-
-        if qtop or qhe or qba:
-            query_top, query_heart, query_base = qtop, qhe, qba
-            used_pyramid = True
-            query_notes |= (qtop | qhe | qba)
-        else:
-            query_notes |= set(normalize_notes_list(split_notes(seed.get("All Notes", ""))))
-            used_pyramid = False
-
-    # 4) Gender filter only
-    filtered = apply_gender_filter(chogan, gender_choice)
-
-    # 5) Avoid duplicating direct-hit refs in the recommendation list
-    direct_refs = set()
-    if len(direct_hits) > 0:
-        for _, hit in direct_hits.iterrows():
-            direct_refs.add(get_ref(hit).lower())
-
-    recommendations = []
-    if query_notes or used_pyramid:
-        for _, row in filtered.iterrows():
-            ref = get_ref(row)
-            if ref.strip().lower() in direct_refs:
-                continue
-
-            score, matched_notes, matched_pillars = score_perfume(
-                query_notes=query_notes,
-                row=row,
-                used_pyramid=used_pyramid,
-                query_top=query_top,
-                query_heart=query_heart,
-                query_base=query_base,
-            )
-
-            # Optional name similarity boost only when searching by name
-            if mode == "By perfume name" and perfume_name.strip():
-                sim = name_similarity(perfume_name, str(row.get("Inspiration", "")))
-                if sim > 0.85:
-                    score = min(score + 1.5, 10.0)
-                elif sim > 0.70:
-                    score = min(score + 0.8, 10.0)
-
-            recommendations.append({
-                "score": float(score),
-                "matched_notes": matched_notes,
-                "matched_pillars": matched_pillars,
-                "row": row,
-            })
-
-        recommendations.sort(key=lambda d: d["score"], reverse=True)
-        recommendations = [r for r in recommendations if r["score"] >= MIN_SCORE_TO_SHOW][:top_n]
-
-    return {
-        "direct_hits": direct_hits,
-        "used_external": used_external,
-        "recommendations": recommendations,
-        "has_query": bool(query_notes or used_pyramid),
-    }
-
-
-# =========================================================
-# SCROLL-TO-TOP
-# =========================================================
-
-def scroll_to_top():
-    st.markdown(
-        f"""
-<script>
-(function() {{
-  const nonce = {st.session_state.scroll_nonce};
-  if (!window.__scrollNonce || window.__scrollNonce !== nonce) {{
-    window.__scrollNonce = nonce;
-    window.scrollTo(0, 0);
-  }}
-}})();
-</script>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# =========================================================
-# UI
-# =========================================================
-
-st.title("Find your Chogan Perfume")
 
 tab_search, tab_add = st.tabs(["Search", "Add a new perfume to the database"])
 
-
-# ---------------------------------------------------------
+# =========================================================
 # SEARCH TAB
-# ---------------------------------------------------------
+# =========================================================
 with tab_search:
-    st.toggle("Mobile mode (results replace search)", key="mobile_mode")
+    st.title("Find your Chogan Perfume")
 
-    if st.session_state.view == "results":
-        scroll_to_top()
+    left, right = st.columns([1, 2])
 
-    # ===== SEARCH VIEW =====
-    if st.session_state.view == "search":
-        if st.session_state.mobile_mode:
-            st.subheader("Search")
+    with left:
+        st.subheader("Search Mode")
 
-            st.radio("Choose input type:", ["By perfume name", "By notes only"], key="mode")
+        with st.form("search_form"):
+            mode = st.radio("Choose input type:", ["By perfume name", "By notes only"])
 
-            if st.session_state.mode == "By perfume name":
-                st.text_input("Perfume name (e.g., Nina)", key="perfume_name")
-                st.text_input("Brand (optional)", key="brand_name")
-            else:
-                # ✅ notes-only: no perfume name/brand
-                st.text_input("Desired notes (comma-separated)", key="notes_text")
+            perfume_name = ""
+            brand_name = ""
 
-            # ✅ Gender filter inline (optional, no separate section)
-            st.selectbox(
+            if mode == "By perfume name":
+                perfume_name = st.text_input("Perfume name (e.g., Nina)")
+                brand_name = st.text_input("Brand (optional)")
+
+            notes_text = st.text_input("Desired notes (comma-separated)")
+
+            gender_choice = st.selectbox(
                 "Gender preference (optional)",
                 [
                     "Any",
@@ -684,284 +434,264 @@ with tab_search:
                     "Women or Unisex (F/U)",
                     "Men or Unisex (M/U)",
                 ],
-                key="gender_choice",
             )
 
-            st.slider("How many recommendations?", 1, 5, key="top_n")
+            top_n = st.slider("How many recommendations?", 1, 5, 3)
+            search_clicked = st.form_submit_button("Search")
 
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("Search", type="primary", use_container_width=True):
-                    p = current_payload()
-                    k = payload_key(p)
-                    st.session_state.last_payload_key = k
-                    st.session_state.cached_results = compute_results(p)
-                    go_to_results()
-            with c2:
-                st.button("Reset", on_click=reset_search, use_container_width=True)
-
+    with right:
+        if not search_clicked:
+            st.subheader("My Recommendations")
+            st.info("Click **Search** to run recommendations.")
         else:
-            left, right = st.columns([1, 2])
+            st.subheader("My Recommendations")
 
-            with left:
-                st.subheader("Search")
+            # 1) Build query notes from typed notes
+            raw_notes = normalize_notes_list(split_notes(notes_text))
+            query_notes = set(raw_notes)
 
-                st.radio("Choose input type:", ["By perfume name", "By notes only"], key="mode")
+            used_pyramid = False
+            query_top, query_heart, query_base = set(), set(), set()
 
-                if st.session_state.mode == "By perfume name":
-                    st.text_input("Perfume name (e.g., Nina)", key="perfume_name")
-                    st.text_input("Brand (optional)", key="brand_name")
-                    st.text_input("Desired notes (comma-separated)", key="notes_text")
-                else:
-                    # ✅ notes-only: no perfume name/brand
-                    st.text_input("Desired notes (comma-separated)", key="notes_text")
-
-                # ✅ Gender filter inline (optional)
-                st.selectbox(
-                    "Gender preference (optional)",
-                    [
-                        "Any",
-                        "Women (F)",
-                        "Men (M)",
-                        "Unisex (U)",
-                        "Women or Unisex (F/U)",
-                        "Men or Unisex (M/U)",
-                    ],
-                    key="gender_choice",
-                )
-
-                st.slider("How many recommendations?", 1, 5, key="top_n")
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Search", type="primary", use_container_width=True):
-                        p = current_payload()
-                        k = payload_key(p)
-                        st.session_state.last_payload_key = k
-                        st.session_state.cached_results = compute_results(p)
-                        go_to_results()
-                with c2:
-                    st.button("Reset", on_click=reset_search, use_container_width=True)
-
-            with right:
-                st.info("Run a search to see recommendations.")
-
-    # ===== RESULTS VIEW =====
-    else:
-        p = current_payload()
-        k = payload_key(p)
-        if st.session_state.cached_results is None or st.session_state.last_payload_key != k:
-            st.session_state.last_payload_key = k
-            st.session_state.cached_results = compute_results(p)
-
-        results = st.session_state.cached_results
-        direct_hits = results["direct_hits"]
-        recs = results["recommendations"]
-        used_external = results["used_external"]
-        has_query = results["has_query"]
-
-        if st.session_state.mobile_mode:
-            topbar_left, topbar_right = st.columns([1, 1])
-            with topbar_left:
-                st.subheader("My Recommendations")
-            with topbar_right:
-                if st.button("← Back", use_container_width=True):
-                    go_to_search()
-
-            # ✅ Score card back at top of recommendations
-            score_card_top()
-
-            if used_external is not None:
-                st.caption(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
+            # 2) Direct matches in Chogan inspirations (for display only)
+            direct_hits = chogan.iloc[0:0]
+            if mode == "By perfume name" and perfume_name.strip():
+                q = perfume_name.strip().lower()
+                direct_hits = chogan[chogan["Inspiration"].fillna("").astype(str).str.lower().str.contains(q, na=False)]
+                if brand_name.strip() and len(direct_hits) > 1:
+                    bq = brand_name.strip().lower()
+                    direct_hits = direct_hits[
+                        direct_hits["Inspiration"].fillna("").astype(str).str.lower().str.contains(bq, na=False)
+                    ]
 
             if len(direct_hits) > 0:
                 st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
-                for rank, (_, hit) in enumerate(direct_hits.head(int(st.session_state.top_n)).iterrows(), start=1):
-                    ref = get_ref(hit)
-                    st.markdown(f"### ✅ Direct match #{rank} — **{ref}**")
+                for rank, (_, hit) in enumerate(direct_hits.head(1).iterrows(), start=1):
+                    ref = (
+                        hit.get("Perfume reference")
+                        or hit.get("Perfume ref.")
+                        or hit.get("Reference")
+                        or hit.get("Code")
+                        or hit.get("ID")
+                        or ""
+                    )
+                    st.markdown(f"### ✅ Direct match — **{ref}**")
                     st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
                     st.write(f"Top: {hit.get('Top Notes','')}")
                     st.write(f"Heart: {hit.get('Heart Notes','')}")
                     st.write(f"Base: {hit.get('Base Notes','')}")
                     st.divider()
 
-            if not has_query:
-                st.warning("Add some notes to get recommendations.")
-            elif not recs:
-                st.warning(
-                    "Sorry, we don't have a good match for the notes you entered. "
-                    "Would you like to try something else?"
-                )
+            # 3) Pull notes from external DB (pyramid if available)
+            if mode == "By perfume name" and perfume_name.strip() and not external.empty:
+                mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
+                matches = external[mask]
+                if brand_name.strip() and len(matches) > 1:
+                    bmask = matches["Brand"].fillna("").astype(str).str.lower().str.contains(brand_name.strip().lower(), na=False)
+                    matches = matches[bmask]
+
+                if len(matches) > 0:
+                    used_external = matches.iloc[0].to_dict()
+
+                    etop = set(normalize_notes_list(split_notes(used_external.get("Top Notes", ""))))
+                    ehe = set(normalize_notes_list(split_notes(used_external.get("Heart Notes", ""))))
+                    eba = set(normalize_notes_list(split_notes(used_external.get("Base Notes", ""))))
+
+                    if etop or ehe or eba:
+                        query_top, query_heart, query_base = etop, ehe, eba
+                        used_pyramid = True
+                        query_notes |= (etop | ehe | eba)
+                    else:
+                        eall = set(normalize_notes_list(split_notes(used_external.get("All Notes", ""))))
+                        query_notes |= eall
+                        used_pyramid = False
+
+                    st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
+
+            # 4) If still no notes, seed from direct hit notes
+            if (not query_notes) and len(direct_hits) > 0:
+                seed = direct_hits.iloc[0].to_dict()
+                st.info("Using the direct match notes to generate recommendations.")
+
+                qtop = set(normalize_notes_list(split_notes(seed.get("Top Notes", ""))))
+                qhe = set(normalize_notes_list(split_notes(seed.get("Heart Notes", ""))))
+                qba = set(normalize_notes_list(split_notes(seed.get("Base Notes", ""))))
+
+                if qtop or qhe or qba:
+                    query_top, query_heart, query_base = qtop, qhe, qba
+                    used_pyramid = True
+                    query_notes |= (qtop | qhe | qba)
+                else:
+                    query_notes |= set(normalize_notes_list(split_notes(seed.get("All Notes", ""))))
+                    used_pyramid = False
+
+            # 5) Apply gender filter (robust)
+            filtered = chogan.copy()
+            if "Gender" in filtered.columns:
+                g_raw = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
+
+                def norm_gender(val: str) -> str:
+                    v = val.strip().upper()
+                    if v in {"F", "M", "U"}:
+                        return v
+                    if "UNISEX" in v:
+                        return "U"
+                    if "WOM" in v or "FEM" in v:
+                        return "F"
+                    if "MEN" in v or "MASC" in v:
+                        return "M"
+                    if "F" in v and "U" in v:
+                        return "F/U"
+                    if "M" in v and "U" in v:
+                        return "M/U"
+                    return v
+
+                g = g_raw.apply(norm_gender)
+
+                if gender_choice == "Women (F)":
+                    filtered = filtered[g.isin(["F", "F/U"])]
+                elif gender_choice == "Men (M)":
+                    filtered = filtered[g.isin(["M", "M/U"])]
+                elif gender_choice == "Unisex (U)":
+                    filtered = filtered[g.isin(["U", "F/U", "M/U"])]
+                elif gender_choice == "Women or Unisex (F/U)":
+                    filtered = filtered[g.isin(["F", "U", "F/U"])]
+                elif gender_choice == "Men or Unisex (M/U)":
+                    filtered = filtered[g.isin(["M", "U", "M/U"])]
+
+            # 6) Score & show recommendations (always, even if direct match exists)
+            if not query_notes and not used_pyramid:
+                st.warning("Add some notes, or search a perfume name that exists in your external database.")
             else:
-                for i, item in enumerate(recs, start=1):
-                    row = item["row"]
-                    score = item["score"]
-                    matched_notes = item["matched_notes"]
-                    matched_pillars = item["matched_pillars"]
+                direct_refs = set()
+                if len(direct_hits) > 0:
+                    for _, hit in direct_hits.iterrows():
+                        ref = (
+                            hit.get("Perfume reference")
+                            or hit.get("Perfume ref.")
+                            or hit.get("Reference")
+                            or hit.get("Code")
+                            or hit.get("ID")
+                            or ""
+                        )
+                        direct_refs.add(str(ref).strip().lower())
 
-                    ref = get_ref(row)
+                results = []
+                for _, row in filtered.iterrows():
+                    ref = (
+                        row.get("Perfume reference")
+                        or row.get("Perfume ref.")
+                        or row.get("Reference")
+                        or row.get("Code")
+                        or row.get("ID")
+                        or ""
+                    )
+                    if str(ref).strip().lower() in direct_refs:
+                        continue
 
-                    st.markdown(f"### #{i} — **{ref}**")
+                    score, matched_notes, matched_pillars = score_perfume(
+                        query_notes=query_notes,
+                        row=row,
+                        used_pyramid=used_pyramid,
+                        query_top=query_top,
+                        query_heart=query_heart,
+                        query_base=query_base,
+                    )
+
+                    if mode == "By perfume name" and perfume_name.strip():
+                        sim = name_similarity(perfume_name, str(row.get("Inspiration", "")))
+                        if sim > 0.85:
+                            score = min(score + 1.5, 10.0)
+                        elif sim > 0.70:
+                            score = min(score + 0.8, 10.0)
+
+                    results.append((score, matched_notes, matched_pillars, row))
+
+                results.sort(key=lambda x: x[0], reverse=True)
+
+                shown = 0
+                for score, matched_notes, matched_pillars, row in results:
+                    if score < MIN_SCORE_TO_SHOW:
+                        continue
+
+                    shown += 1
+                    ref = (
+                        row.get("Perfume reference")
+                        or row.get("Perfume ref.")
+                        or row.get("Reference")
+                        or row.get("Code")
+                        or row.get("ID")
+                        or ""
+                    )
+
+                    st.markdown(f"### #{shown} — **{ref}**")
                     st.write(f"Inspiration: *{row.get('Inspiration','')}*")
 
-                    # ✅ Color scale applied to matched notes (amber/yellow/green)
-                    st.markdown(
-                        f"**Matched notes:**<br>{colored_note_chips(matched_notes, score)}",
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown(
-                        f"**Matched accords:**<br>{colored_pillar_chips(matched_pillars)}",
-                        unsafe_allow_html=True,
-                    )
+                    # BIG colored score card (color applies to score)
+                    score_card(score)
+
+                    # matched notes + accords in same rounded style
+                    c = score_color(score)
+                    pill_box("Matched notes", matched_notes, color_hex=c)
+                    pill_box("Matched accords", matched_pillars, color_hex=c)
 
                     st.write(f"Top: {row.get('Top Notes','')}")
                     st.write(f"Heart: {row.get('Heart Notes','')}")
                     st.write(f"Base: {row.get('Base Notes','')}")
-                    st.write(f"**Match score:** {score:.2f} / 10")
                     st.divider()
 
-        else:
-            left, right = st.columns([1, 2])
+                    if shown >= top_n:
+                        break
 
-            with left:
-                st.subheader("Search")
-
-                st.radio("Choose input type:", ["By perfume name", "By notes only"], key="mode")
-
-                if st.session_state.mode == "By perfume name":
-                    st.text_input("Perfume name (e.g., Nina)", key="perfume_name")
-                    st.text_input("Brand (optional)", key="brand_name")
-                    st.text_input("Desired notes (comma-separated)", key="notes_text")
-                else:
-                    st.text_input("Desired notes (comma-separated)", key="notes_text")
-
-                st.selectbox(
-                    "Gender preference (optional)",
-                    [
-                        "Any",
-                        "Women (F)",
-                        "Men (M)",
-                        "Unisex (U)",
-                        "Women or Unisex (F/U)",
-                        "Men or Unisex (M/U)",
-                    ],
-                    key="gender_choice",
-                )
-                st.slider("How many recommendations?", 1, 5, key="top_n")
-
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("Search", type="primary", use_container_width=True, key="search_again"):
-                        p2 = current_payload()
-                        k2 = payload_key(p2)
-                        st.session_state.last_payload_key = k2
-                        st.session_state.cached_results = compute_results(p2)
-                        go_to_results()
-                with c2:
-                    st.button("Reset", on_click=reset_search, use_container_width=True, key="reset2")
-
-            with right:
-                st.subheader("My Recommendations")
-
-                # ✅ Score card back at top of recommendations
-                score_card_top()
-
-                if used_external is not None:
-                    st.caption(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
-
-                if len(direct_hits) > 0:
-                    st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
-                    for rank, (_, hit) in enumerate(direct_hits.head(int(st.session_state.top_n)).iterrows(), start=1):
-                        ref = get_ref(hit)
-                        st.markdown(f"### ✅ Direct match #{rank} — **{ref}**")
-                        st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
-                        st.write(f"Top: {hit.get('Top Notes','')}")
-                        st.write(f"Heart: {hit.get('Heart Notes','')}")
-                        st.write(f"Base: {hit.get('Base Notes','')}")
-                        st.divider()
-
-                if not has_query:
-                    st.warning("Add some notes to get recommendations.")
-                elif not recs:
+                if shown == 0:
                     st.warning(
-                        "Sorry, we don't have a good match for the notes you entered. "
+                        "Sorry, we don't have a good match for the notes in the perfume you are looking for. "
                         "Would you like to try something else?"
                     )
-                else:
-                    for i, item in enumerate(recs, start=1):
-                        row = item["row"]
-                        score = item["score"]
-                        matched_notes = item["matched_notes"]
-                        matched_pillars = item["matched_pillars"]
 
-                        ref = get_ref(row)
-
-                        st.markdown(f"### #{i} — **{ref}**")
-                        st.write(f"Inspiration: *{row.get('Inspiration','')}*")
-                        st.write(f"**Match score:** {score:.2f} / 10")
-
-                        st.markdown(
-                            f"**Matched notes:**<br>{colored_note_chips(matched_notes, score)}",
-                            unsafe_allow_html=True,
-                        )
-                        st.markdown(
-                            f"**Matched accords:**<br>{colored_pillar_chips(matched_pillars)}",
-                            unsafe_allow_html=True,
-                        )
-
-                        st.write(f"Top: {row.get('Top Notes','')}")
-                        st.write(f"Heart: {row.get('Heart Notes','')}")
-                        st.write(f"Base: {row.get('Base Notes','')}")
-                        st.divider()
-
-
-# ---------------------------------------------------------
-# ADD NEW PERFUME TAB
-# ---------------------------------------------------------
+# =========================================================
+# ADD TAB
+# =========================================================
 with tab_add:
-    st.subheader("Add / Update an External Perfume")
+    st.subheader("Add / Update an External Perfume (manual entry)")
 
-    if external_ws is None:
-        st.error("Google Sheets is not connected. Fix your credentials/secrets first.")
-    else:
-        with st.form("add_external", clear_on_submit=True):
-            c1, c2 = st.columns(2)
+    with st.form("add_external", clear_on_submit=True):
+        c1, c2 = st.columns(2)
 
-            with c1:
-                new_perfume = st.text_input("Perfume")
-                new_brand = st.text_input("Brand")
-                new_gender = st.selectbox("Gender", ["", "F", "M", "U"])
+        with c1:
+            new_perfume = st.text_input("Perfume")
+            new_brand = st.text_input("Brand")
+            new_family = st.text_input("Olfactory Family")
+            new_gender = st.selectbox("Gender", ["", "F", "M", "U"])
 
-            with c2:
-                new_top = st.text_input("Top Notes (comma-separated)")
-                new_heart = st.text_input("Heart Notes (comma-separated)")
-                new_base = st.text_input("Base Notes (comma-separated)")
-                new_all = st.text_input("All Notes (comma-separated) — use if no pyramid")
+        with c2:
+            new_top = st.text_input("Top Notes")
+            new_heart = st.text_input("Heart Notes")
+            new_base = st.text_input("Base Notes")
+            new_all = st.text_input("All Notes")
 
-            submitted = st.form_submit_button("Save perfume")
+        submitted = st.form_submit_button("Save external perfume")
 
-        if submitted:
-            if not new_perfume.strip():
-                st.error("Perfume name required.")
-            else:
-                row_dict = {
-                    "Perfume": new_perfume.strip(),
-                    "Brand": new_brand.strip(),
-                    "Gender": new_gender.strip(),
-                    "Top Notes": new_top.strip(),
-                    "Heart Notes": new_heart.strip(),
-                    "Base Notes": new_base.strip(),
-                    "All Notes": new_all.strip(),
-                    "Olfactory Family": "",  # not used
-                }
+    if submitted:
+        if not new_perfume.strip():
+            st.error("Perfume name required.")
+        elif external_ws is None:
+            st.error("Google Sheets not connected. Fix the error above first.")
+        else:
+            row_dict = {
+                "Perfume": new_perfume.strip(),
+                "Brand": new_brand.strip(),
+                "Gender": new_gender.strip(),
+                "Top Notes": new_top.strip(),
+                "Heart Notes": new_heart.strip(),
+                "Base Notes": new_base.strip(),
+                "All Notes": new_all.strip(),
+                "Olfactory Family": new_family.strip(),
+            }
 
-                upsert_external_to_sheets(external_ws, row_dict)
-                st.success("Saved (updated if already existed).")
-
-                try:
-                    external, external_ws = load_external_from_sheets()
-                except Exception:
-                    pass
+            upsert_external_to_sheets(external_ws, row_dict)
+            st.success("Saved.")
+            st.rerun()
 
     with st.expander("View saved external perfumes"):
         st.dataframe(external.tail(50))
