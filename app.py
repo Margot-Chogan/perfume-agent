@@ -333,7 +333,17 @@ with left:
 
         st.subheader("Filters (optional)")
         family_filter = st.text_input("Olfactory family contains")
-        gender_choice = st.selectbox("Gender preference", ["Any", "Women (F)", "Men (M)", "Unisex (U)"])
+        gender_choice = st.selectbox(
+            "Gender preference",
+            [
+                "Any",
+                "Women (F)",
+                "Men (M)",
+                "Unisex (U)",
+                "Women or Unisex (F/U)",
+                "Men or Unisex (M/U)"
+            ]
+        )
         top_n = st.slider("How many recommendations?", 1, 5, 3)
 
         search_clicked = st.form_submit_button("Search")
