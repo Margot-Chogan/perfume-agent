@@ -8,9 +8,17 @@ from google.oauth2.service_account import Credentials
 from difflib import SequenceMatcher
 
 # =========================================================
+# PAGE CONFIG (mobile-friendly)
+# =========================================================
+st.set_page_config(
+    page_title="Find your Chogan Perfume",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# =========================================================
 # CONFIG
 # =========================================================
-
 EXPECTED_EXTERNAL_COLS = [
     "Perfume",
     "Brand",
@@ -33,7 +41,6 @@ MIN_SCORE_TO_SHOW = 3.0
 # =========================================================
 # GOOGLE SHEETS
 # =========================================================
-
 @st.cache_resource
 def get_gs_client():
     creds_info = json.loads(st.secrets["gcp_service_account"]["raw_json"])
@@ -73,7 +80,8 @@ def load_external_from_sheets():
     return df[EXPECTED_EXTERNAL_COLS], ws
 
 
-def upsert_external_to_sheets(ws, row_dict):
+def upsert_external_to_sheets(row_dict):
+    # Always re-open fresh
     ws = get_external_worksheet()
     ensure_external_headers(ws)
 
@@ -101,7 +109,6 @@ def upsert_external_to_sheets(ws, row_dict):
 # =========================================================
 # TEXT NORMALIZATION
 # =========================================================
-
 def strip_accents(s):
     s = unicodedata.normalize("NFKD", str(s))
     return "".join(c for c in s if not unicodedata.combining(c))
@@ -117,7 +124,6 @@ def norm_text(s):
 def name_similarity(a, b):
     a = norm_text(a)
     b = norm_text(b)
-
     fuzz = SequenceMatcher(None, a, b).ratio()
     ta = set(a.split())
     tb = set(b.split())
@@ -128,7 +134,6 @@ def name_similarity(a, b):
 # =========================================================
 # NOTES HELPERS
 # =========================================================
-
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
         return []
@@ -147,7 +152,6 @@ def normalize_notes_list(lst):
 # =========================================================
 # PILLARS (VIBE)
 # =========================================================
-
 PILLARS = {
     "fruity": {
         "pear","raspberry","strawberry","lychee","blackcurrant","currant","peach","plum",
@@ -169,7 +173,6 @@ ANCHOR_COMBOS = [
 
 
 def detect_pillars(notes_set):
-    # Notes are already normalized; we still do substring-friendly blob matching
     blob = " ".join(sorted(notes_set))
     found = set()
     for pillar, kws in PILLARS.items():
@@ -190,7 +193,6 @@ def penalties(query_pillars, perfume_pillars):
 # =========================================================
 # SCORING (PYRAMID + VIBE)
 # =========================================================
-
 def get_row_note_sets(row):
     top = set(normalize_notes_list(split_notes(row.get("Top Notes", ""))))
     heart = set(normalize_notes_list(split_notes(row.get("Heart Notes", ""))))
@@ -209,7 +211,6 @@ def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart
         return 0.0
 
     s = 0.0
-
     for n in q_top:
         if n in perf_top:
             s += 2.0
@@ -274,8 +275,7 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 
     score10 = max(min(blended * 10.0, 10.0), 0.0)
 
-    # Return extra info so UI can show matched notes + matched accords
-    matched_notes = sorted(set(query_notes) & set(perf_all))
+    matched_notes = sorted(set(q_all_for_vibe) & set(perf_all))
     matched_pillars = sorted(query_pillars & perfume_pillars)
 
     return score10, matched_notes, matched_pillars
@@ -284,7 +284,6 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 # =========================================================
 # DATA LOAD
 # =========================================================
-
 @st.cache_data
 def load_chogan_csv(path):
     return pd.read_csv(path)
@@ -296,98 +295,176 @@ except Exception:
     st.stop()
 
 try:
-    external, external_ws = load_external_from_sheets()
+    external, _external_ws = load_external_from_sheets()
 except Exception as e:
     st.error(f"Could not load external perfumes from Google Sheets: {e}")
     external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
-    external_ws = None
+    _external_ws = None
 
 
 # =========================================================
-# UI
+# SESSION STATE + RESET
 # =========================================================
+def ss_init():
+    defaults = {
+        "do_search": False,
+        "mode": "By perfume name",
+        "perfume_name": "",
+        "brand_name": "",
+        "notes_text": "",
+        "family_filter": "",
+        "gender_choice": "Any",
+        "top_n": 3,
+        # Manage tab inputs
+        "new_perfume": "",
+        "new_brand": "",
+        "new_family": "",
+        "new_gender": "",
+        "new_top": "",
+        "new_heart": "",
+        "new_base": "",
+        "new_all": "",
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
+
+def reset_search():
+    # Whenever user changes any search input, hide results until they click Search again
+    st.session_state.do_search = False
+
+
+ss_init()
+
+
+# =========================================================
+# UI (Tabs)
+# =========================================================
 st.title("Find your Chogan Perfume")
 
-left, right = st.columns([1, 2])
+tab_search, tab_manage = st.tabs(["🔎 Search", "➕ Add / Update External Perfume"])
 
-with left:
+
+# ---------------------------------------------------------
+# SEARCH TAB (single-column UX, mobile-friendly)
+# ---------------------------------------------------------
+with tab_search:
     st.subheader("Search Mode")
 
-    with st.form("search_form"):
-        mode = st.radio("Choose input type:", ["By perfume name", "By notes only"])
+    st.session_state.mode = st.radio(
+        "Choose input type:",
+        ["By perfume name", "By notes only"],
+        index=0 if st.session_state.mode == "By perfume name" else 1,
+        key="mode_radio",
+        on_change=reset_search,
+    )
 
-        perfume_name = ""
-        brand_name = ""
-        if mode == "By perfume name":
-            perfume_name = st.text_input("Perfume name (e.g., Nina)")
-            brand_name = st.text_input("Brand (optional)")
+    if st.session_state.mode == "By perfume name":
+        st.session_state.perfume_name = st.text_input(
+            "Perfume name (e.g., Nina)",
+            value=st.session_state.perfume_name,
+            key="perfume_name_input",
+            on_change=reset_search,
+        )
+        st.session_state.brand_name = st.text_input(
+            "Brand (optional)",
+            value=st.session_state.brand_name,
+            key="brand_name_input",
+            on_change=reset_search,
+        )
+    else:
+        # Clear but also reset results
+        st.session_state.perfume_name = ""
+        st.session_state.brand_name = ""
 
-        notes_text = st.text_input("Desired notes (comma-separated)")
+    st.session_state.notes_text = st.text_input(
+        "Desired notes (comma-separated)",
+        value=st.session_state.notes_text,
+        placeholder="e.g., jasmine, lavender, woody",
+        key="notes_text_input",
+        on_change=reset_search,
+    )
 
-        st.subheader("Filters (optional)")
-        family_filter = st.text_input("Olfactory family contains")
-
-        gender_choice = st.selectbox(
-            "Gender preference",
-            [
-                "Any",
-                "Women (F)",
-                "Men (M)",
-                "Unisex (U)",
-                "Women or Unisex (F/U)",
-                "Men or Unisex (M/U)",
-            ]
+    with st.expander("Filters (optional)", expanded=True):
+        st.session_state.family_filter = st.text_input(
+            "Olfactory family contains",
+            value=st.session_state.family_filter,
+            key="family_filter_input",
+            on_change=reset_search,
         )
 
-        top_n = st.slider("How many recommendations?", 1, 5, 3)
-        search_clicked = st.form_submit_button("Search")
+        choices = [
+            "Any",
+            "Women (F)",
+            "Men (M)",
+            "Unisex (U)",
+            "Women or Unisex (F/U)",
+            "Men or Unisex (M/U)",
+        ]
+        st.session_state.gender_choice = st.selectbox(
+            "Gender preference",
+            choices,
+            index=choices.index(st.session_state.gender_choice),
+            key="gender_choice_input",
+            on_change=reset_search,
+        )
 
+        st.session_state.top_n = st.slider(
+            "How many recommendations?",
+            1, 5,
+            int(st.session_state.top_n),
+            key="top_n_slider",
+            on_change=reset_search,
+        )
 
-with right:
+    if st.button("Search", type="primary", key="search_button"):
+        st.session_state.do_search = True
+
+    st.divider()
+
     st.subheader("My Recommendations")
-
-    st.info(
-        """
-**How to read the match score:**
-
+    with st.expander("How to read the match score", expanded=True):
+        st.markdown(
+            """
 - **7.0–10.0** → Excellent match — You'll love this one!  
 - **5.0–6.9** → Good match, give it a try  
 - **3.0–4.9** → Quite different, but some similar notes
-        """
-    )
+            """
+        )
 
-    direct_matches_box = st.container()
-
-    if not search_clicked:
-        st.info("Click **Search** to run recommendations.")
+    if not st.session_state.do_search:
+        st.info("Adjust your inputs, then click **Search**.")
     else:
-        # -------------------------------------------------
-        # 1) Build query notes from user text
-        # -------------------------------------------------
+        mode = st.session_state.mode
+        perfume_name = st.session_state.perfume_name
+        brand_name = st.session_state.brand_name
+        notes_text = st.session_state.notes_text
+        family_filter = st.session_state.family_filter
+        gender_choice = st.session_state.gender_choice
+        top_n = int(st.session_state.top_n)
+
+        # 1) Query notes from user input
         raw_notes = normalize_notes_list(split_notes(notes_text))
         query_notes = set(raw_notes)
 
         used_pyramid = False
         query_top, query_heart, query_base = set(), set(), set()
 
-        # -------------------------------------------------
-        # 2) Direct matches in Chogan inspirations
-        # -------------------------------------------------
+        # 2) Direct matches
         direct_hits = chogan.iloc[0:0]
         if mode == "By perfume name" and perfume_name.strip():
             q = perfume_name.strip().lower()
             direct_hits = chogan[chogan["Inspiration"].fillna("").astype(str).str.lower().str.contains(q, na=False)]
-
             if brand_name.strip() and len(direct_hits) > 1:
                 bq = brand_name.strip().lower()
                 direct_hits = direct_hits[
                     direct_hits["Inspiration"].fillna("").astype(str).str.lower().str.contains(bq, na=False)
                 ]
 
-        with direct_matches_box:
+        with st.expander("Direct match in Chogan inspirations", expanded=(len(direct_hits) > 0)):
             if len(direct_hits) > 0:
-                st.success(f"Direct match found in Chogan inspirations ({len(direct_hits)} result(s)).")
+                st.success(f"Direct match found ({len(direct_hits)} result(s)).")
                 for rank, (_, hit) in enumerate(direct_hits.head(top_n).iterrows(), start=1):
                     ref = (
                         hit.get("Perfume reference")
@@ -403,14 +480,13 @@ with right:
                     st.write(f"Heart: {hit.get('Heart Notes','')}")
                     st.write(f"Base: {hit.get('Base Notes','')}")
                     st.divider()
+            else:
+                st.caption("No direct match found in Chogan inspirations.")
 
-        # -------------------------------------------------
-        # 3) Pull notes from external DB (makes external perfumes work)
-        # -------------------------------------------------
+        # 3) Pull notes from external DB if available
         if mode == "By perfume name" and perfume_name.strip() and not external.empty:
             mask = external["Perfume"].fillna("").astype(str).str.lower().str.contains(perfume_name.strip().lower(), na=False)
             matches = external[mask]
-
             if brand_name.strip() and len(matches) > 1:
                 bmask = matches["Brand"].fillna("").astype(str).str.lower().str.contains(brand_name.strip().lower(), na=False)
                 matches = matches[bmask]
@@ -433,9 +509,7 @@ with right:
 
                 st.info(f"Using saved notes for: {used_external.get('Perfume','')} ({used_external.get('Brand','')})")
 
-        # -------------------------------------------------
-        # 4) If still no notes, seed from direct hit notes
-        # -------------------------------------------------
+        # 4) Seed from direct hit if still no notes
         if (not query_notes) and len(direct_hits) > 0:
             seed = direct_hits.iloc[0].to_dict()
             st.info("Using the direct match notes to generate secondary recommendations.")
@@ -452,9 +526,7 @@ with right:
                 query_notes |= set(normalize_notes_list(split_notes(seed.get("All Notes", ""))))
                 used_pyramid = False
 
-        # -------------------------------------------------
-        # 5) Apply filters (family + robust gender)
-        # -------------------------------------------------
+        # 5) Apply filters
         filtered = chogan.copy()
 
         if family_filter.strip() and "Olfactory Family" in filtered.columns:
@@ -462,7 +534,6 @@ with right:
                 filtered["Olfactory Family"].fillna("").astype(str).str.lower().str.contains(family_filter.strip().lower(), na=False)
             ]
 
-        # Robust gender normalization + filter
         if "Gender" in filtered.columns:
             g_raw = filtered["Gender"].fillna("").astype(str).str.strip().str.upper()
 
@@ -494,15 +565,11 @@ with right:
                 filtered = filtered[g.isin(["F", "U", "F/U"])]
             elif gender_choice == "Men or Unisex (M/U)":
                 filtered = filtered[g.isin(["M", "U", "M/U"])]
-            # "Any" -> no filter
 
-        # -------------------------------------------------
-        # 6) Score & show recommendations (ALWAYS runs now)
-        # -------------------------------------------------
+        # 6) Score & show secondary recs
         if not query_notes and not used_pyramid:
             st.warning("Add some notes, or search a perfume name that exists in your external database.")
         else:
-            # Avoid duplicating the same direct-hit refs in secondary list
             direct_refs = set()
             if len(direct_hits) > 0:
                 for _, hit in direct_hits.iterrows():
@@ -538,7 +605,6 @@ with right:
                     query_base=query_base,
                 )
 
-                # Optional name similarity boost
                 if mode == "By perfume name" and perfume_name.strip():
                     sim = name_similarity(perfume_name, str(row.get("Inspiration", "")))
                     if sim > 0.85:
@@ -568,8 +634,6 @@ with right:
                 st.markdown(f"### #{shown} — **{ref}**")
                 st.write(f"Inspiration: *{row.get('Inspiration','')}*")
                 st.write(f"**Match score:** {score:.2f} / 10")
-
-                # ✅ Matched notes + accords/pillars (what you asked for)
                 st.write(f"**Matched notes:** {', '.join(matched_notes) if matched_notes else 'None'}")
                 st.write(f"**Matched accords:** {', '.join(matched_pillars) if matched_pillars else 'None'}")
 
@@ -588,49 +652,63 @@ with right:
                 )
 
 
-# =========================================================
-# ADD EXTERNAL PERFUME
-# =========================================================
+# ---------------------------------------------------------
+# MANAGE TAB (button-only save; Enter will not save)
+# ---------------------------------------------------------
+with tab_manage:
+    st.subheader("Add / Update an External Perfume")
 
-st.subheader("Add / Update an External Perfume (manual entry)")
+    col1, col2 = st.columns(2)
 
-with st.form("add_external", clear_on_submit=True):
-    c1, c2 = st.columns(2)
+    with col1:
+        st.session_state.new_perfume = st.text_input("Perfume", value=st.session_state.new_perfume, key="new_perfume_input")
+        st.session_state.new_brand = st.text_input("Brand", value=st.session_state.new_brand, key="new_brand_input")
+        st.session_state.new_family = st.text_input("Olfactory Family (optional)", value=st.session_state.new_family, key="new_family_input")
+        st.session_state.new_gender = st.selectbox("Gender (optional)", ["", "F", "M", "U"],
+                                                   index=["", "F", "M", "U"].index(st.session_state.new_gender if st.session_state.new_gender in {"", "F", "M", "U"} else ""),
+                                                   key="new_gender_input")
 
-    with c1:
-        new_perfume = st.text_input("Perfume")
-        new_brand = st.text_input("Brand")
-        new_family = st.text_input("Olfactory Family")
-        new_gender = st.selectbox("Gender", ["", "F", "M", "U"])
+    with col2:
+        st.session_state.new_top = st.text_input("Top Notes (comma-separated)", value=st.session_state.new_top, key="new_top_input")
+        st.session_state.new_heart = st.text_input("Heart Notes (comma-separated)", value=st.session_state.new_heart, key="new_heart_input")
+        st.session_state.new_base = st.text_input("Base Notes (comma-separated)", value=st.session_state.new_base, key="new_base_input")
+        st.session_state.new_all = st.text_input("All Notes (comma-separated) — use if no pyramid", value=st.session_state.new_all, key="new_all_input")
 
-    with c2:
-        new_top = st.text_input("Top Notes")
-        new_heart = st.text_input("Heart Notes")
-        new_base = st.text_input("Base Notes")
-        new_all = st.text_input("All Notes")
+    save_clicked = st.button("Save external perfume", type="primary")
 
-    submitted = st.form_submit_button("Save external perfume")
+    if save_clicked:
+        if not st.session_state.new_perfume.strip():
+            st.error("Perfume name is required.")
+        else:
+            try:
+                row_dict = {
+                    "Perfume": st.session_state.new_perfume.strip(),
+                    "Brand": st.session_state.new_brand.strip(),
+                    "Gender": st.session_state.new_gender.strip(),
+                    "Top Notes": st.session_state.new_top.strip(),
+                    "Heart Notes": st.session_state.new_heart.strip(),
+                    "Base Notes": st.session_state.new_base.strip(),
+                    "All Notes": st.session_state.new_all.strip(),
+                    "Olfactory Family": st.session_state.new_family.strip(),
+                }
+                upsert_external_to_sheets(row_dict)
+                st.success("Saved (updated if already existed).")
 
-if submitted:
-    if not new_perfume.strip():
-        st.error("Perfume name required.")
-    elif external_ws is None:
-        st.error("Google Sheets not connected. Fix the error above first.")
-    else:
-        row_dict = {
-            "Perfume": new_perfume.strip(),
-            "Brand": new_brand.strip(),
-            "Gender": new_gender.strip(),
-            "Top Notes": new_top.strip(),
-            "Heart Notes": new_heart.strip(),
-            "Base Notes": new_base.strip(),
-            "All Notes": new_all.strip(),
-            "Olfactory Family": new_family.strip(),
-        }
+                # Clear fields
+                for k in ["new_perfume","new_brand","new_family","new_gender","new_top","new_heart","new_base","new_all"]:
+                    st.session_state[k] = "" if k != "new_gender" else ""
 
-        upsert_external_to_sheets(external_ws, row_dict)
-        st.success("Saved.")
-        st.rerun()
+                # Also refresh external cache next run
+                st.rerun()
+            except Exception as e:
+                st.error("Could not save to Google Sheets (details below):")
+                st.exception(e)
 
-with st.expander("View saved external perfumes"):
-    st.dataframe(external.tail(50))
+    # Show latest external perfumes
+    try:
+        external_latest, _ = load_external_from_sheets()
+    except Exception:
+        external_latest = external
+
+    with st.expander("View saved external perfumes"):
+        st.dataframe(external_latest.tail(50))
