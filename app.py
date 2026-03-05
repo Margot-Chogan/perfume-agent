@@ -1,4 +1,8 @@
 import streamlit as st
+
+# IMPORTANT: set_page_config must be the first Streamlit call
+st.set_page_config(page_title="Find your Chogan Perfume", layout="wide")
+
 import pandas as pd
 import re
 import json
@@ -136,7 +140,7 @@ NOTE_DESCRIPTORS = {
     "madagascan", "madagascar", "bourbon", "damask", "damascena", "honeyed",
     "african", "calabrian", "white", "black", "red", "pink", "green",
     "rich", "deep", "leathery", "soft", "warm", "fresh",
-    "wood", "woody", "woods",  # careful: we keep "woody" for pillars, but for note matching it’s usually not a note
+    "wood", "woody", "woods",
 }
 
 # Explicit synonyms / translations / canonical forms
@@ -157,11 +161,13 @@ NOTE_SYNONYMS = {
     "cedarwood": "cedar",
 }
 
+
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
         return []
     parts = re.split(r"[,/;]+", str(x))
     return [p.strip() for p in parts if p.strip()]
+
 
 def normalize_note(note: str) -> str:
     """
@@ -184,7 +190,6 @@ def normalize_note(note: str) -> str:
 
     tokens = [t for t in raw.split() if t and t not in NOTE_DESCRIPTORS]
     if not tokens:
-        # if everything got stripped, fall back to original cleaned string
         tokens = raw.split()
 
     cleaned = " ".join(tokens).strip()
@@ -193,8 +198,8 @@ def normalize_note(note: str) -> str:
     if cleaned in NOTE_SYNONYMS:
         return NOTE_SYNONYMS[cleaned]
 
-    # Special handling: if something ends with "blossom" etc, keep phrase
     return cleaned
+
 
 def normalize_notes_list(lst):
     out = []
@@ -203,6 +208,7 @@ def normalize_notes_list(lst):
         if n:
             out.append(n)
     return out
+
 
 def notes_match(a: str, b: str) -> bool:
     """
@@ -216,8 +222,8 @@ def notes_match(a: str, b: str) -> bool:
         return False
     if a == b:
         return True
-    # phrase containment (handles e.g. orange blossom vs african orange blossom)
     return (a in b) or (b in a)
+
 
 def set_intersection_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
     matched = set()
@@ -227,6 +233,7 @@ def set_intersection_smart(query_notes_set: set[str], perfume_notes_set: set[str
                 matched.add(q)
                 break
     return matched
+
 
 def set_missing_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
     missing = set()
@@ -240,44 +247,63 @@ def set_missing_smart(query_notes_set: set[str], perfume_notes_set: set[str]) ->
             missing.add(q)
     return missing
 
+
 # =========================================================
 # PILLARS (VIBE / ACCORDS)
 # =========================================================
 
 PILLARS = {
-    # Fruits that are NOT primarily “citrus”
     "fruity": {
         "pear", "raspberry", "strawberry", "lychee", "blackcurrant", "currant",
         "peach", "plum", "apple", "mango",
     },
-
-    # Citrus family (kept separate so it can be matched as its own accord)
     "citrussy": {
         "bergamot", "lemon", "lime", "orange", "mandarin", "tangerine",
         "grapefruit", "pomelo", "yuzu", "citron", "blood orange",
         "orange zest", "lemon zest", "citrus", "citric",
         "neroli", "petitgrain",
     },
-
     "floral": {
         "rose", "black rose", "jasmine", "tuberose", "orange blossom", "peony",
         "datura", "iris", "violet", "orchid",
     },
-
     "gourmand": {
         "vanilla", "praline", "caramel", "coffee", "tonka", "chocolate",
         "benzoin", "toffee", "cocoa", "honey",
     },
-
     "woody": {
         "patchouli", "cedar", "sandalwood", "vetiver", "moss", "oakmoss",
         "papyrus", "oud",
     },
-
     "musky": {"musk", "ambroxan", "ambergris"},
-
     "resinous": {"incense", "labdanum", "amber", "myrrh", "opoponax"},
 }
+
+# Anchor combos (small nudges)
+ANCHOR_COMBOS = [
+    ({"rose", "patchouli"}, 0.8),
+    ({"vanilla", "patchouli"}, 0.6),
+    ({"coffee", "vanilla"}, 0.8),
+    ({"praline", "vanilla"}, 0.7),
+    ({"bergamot", "neroli"}, 0.6),  # optional citrus-floral signature
+]
+
+
+def detect_pillars(notes_set: set[str]) -> set[str]:
+    # Notes are normalized; pillar keywords are normalized too
+    found = set()
+    for pillar, kws in PILLARS.items():
+        if notes_set & kws:
+            found.add(pillar)
+    return found
+
+
+def penalties(query_pillars: set[str], perfume_pillars: set[str]) -> float:
+    pen = 0.0
+    # Example: if gourmand is in query pillars but candidate lacks it, small penalty
+    if "gourmand" in query_pillars and "gourmand" not in perfume_pillars:
+        pen -= 1.0
+    return pen
 
 
 # =========================================================
@@ -290,6 +316,7 @@ def get_row_note_sets(row):
     base = set(normalize_notes_list(split_notes(row.get("Base Notes", ""))))
     all_notes = top | heart | base
     return top, heart, base, all_notes
+
 
 def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart, perf_base):
     """
@@ -330,11 +357,13 @@ def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart
 
     return max(min(s / denom, 1.0), 0.0)
 
+
 def score_notes_simple(query_notes: set[str], perfume_notes: set[str]) -> float:
     if not query_notes:
         return 0.0
     matched = set_intersection_smart(query_notes, perfume_notes)
     return len(matched) / max(len(query_notes), 1)
+
 
 def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_heart=None, query_base=None):
     perf_top, perf_heart, perf_base, perf_all = get_row_note_sets(row)
@@ -376,6 +405,7 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 
     return score10, matched_notes, matched_pillars, missing_notes
 
+
 # =========================================================
 # DATA LOAD
 # =========================================================
@@ -413,6 +443,7 @@ def score_badge(score: float):
         return ("Worth a try", "#fde68a", "#111827")    # light yellow
     return ("Low match", "#e5e7eb", "#111827")          # gray
 
+
 def score_scale_card():
     st.markdown(
         """
@@ -446,7 +477,6 @@ def reset_search():
 # APP LAYOUT
 # =========================================================
 
-st.set_page_config(page_title="Find your Chogan Perfume", layout="wide")
 st.title("Find your Chogan Perfume")
 
 tab_search, tab_add = st.tabs(["Search", "Add a new perfume to the database"])
@@ -471,8 +501,10 @@ with tab_search:
             brand_name = st.text_input("Brand (optional)")
             notes_text = st.text_input("Desired notes (comma-separated)")
         else:
-            # Notes-only mode: no perfume/brand fields
-            notes_text = st.text_input("Desired notes (comma-separated)", placeholder="e.g., jasmine, vanilla, patchouli")
+            notes_text = st.text_input(
+                "Desired notes (comma-separated)",
+                placeholder="e.g., jasmine, vanilla, patchouli",
+            )
 
         gender_choice = st.selectbox(
             "Gender preference (optional)",
@@ -532,7 +564,7 @@ with tab_search:
             query_top, query_heart, query_base = set(), set(), set()
 
             # -------------------------------------------------
-            # 2) "Exact match" candidates in Chogan inspirations (smart similarity)
+            # 2) "Exact match" candidates in Chogan inspirations
             # -------------------------------------------------
             exact_hits = chogan.iloc[0:0]
             exact_hit_rows = []
@@ -540,7 +572,6 @@ with tab_search:
             if mode == "By perfume name" and perfume_name.strip():
                 qname = perfume_name.strip()
 
-                # compute similarity for each inspiration
                 for idx, row in chogan.iterrows():
                     insp = str(row.get("Inspiration", ""))
                     if not insp:
@@ -548,20 +579,19 @@ with tab_search:
 
                     sim = name_similarity(qname, insp)
 
-                    # brand hint (optional): small bump if brand appears
+                    # brand hint: small bump if brand appears
                     if brand_name.strip():
                         b = norm_text(brand_name)
                         if b and b in norm_text(insp):
                             sim += 0.06
 
-                    # also include if raw contains (so user typing partial still works)
                     contains = norm_text(qname) in norm_text(insp)
 
                     if sim >= EXACT_MATCH_SIM_THRESHOLD or contains:
                         exact_hit_rows.append((sim, idx))
 
                 exact_hit_rows.sort(key=lambda x: x[0], reverse=True)
-                exact_idxs = [idx for _, idx in exact_hit_rows[:10]]  # show up to 10 exact matches
+                exact_idxs = [idx for _, idx in exact_hit_rows[:10]]
                 if exact_idxs:
                     exact_hits = chogan.loc[exact_idxs].copy()
 
@@ -670,7 +700,6 @@ with tab_search:
                     filtered = filtered[g.isin(["F", "U", "F/U"])]
                 elif gender_choice == "Men or Unisex (M/U)":
                     filtered = filtered[g.isin(["M", "U", "M/U"])]
-                # Any -> no filter
 
             # -------------------------------------------------
             # 6) Score & show recommendations
@@ -678,7 +707,6 @@ with tab_search:
             if not query_notes and not used_pyramid:
                 st.warning("Add some notes, or search a perfume name that exists in your external database.")
             else:
-                # Avoid duplicating exact-hit refs in recommendations list
                 exact_refs = set()
                 if len(exact_hits) > 0:
                     for _, hit in exact_hits.iterrows():
@@ -732,7 +760,6 @@ with tab_search:
                         continue
 
                     shown += 1
-
                     ref = (
                         row.get("Perfume reference")
                         or row.get("Perfume ref.")
@@ -745,7 +772,6 @@ with tab_search:
                     st.markdown(f"### #{shown} — **{ref}**")
                     st.write(f"Inspiration: *{row.get('Inspiration','')}*")
 
-                    # Score card (bigger + bold)
                     label, bg, fg = score_badge(score)
                     st.markdown(
                         f"""
@@ -759,17 +785,14 @@ with tab_search:
                         unsafe_allow_html=True,
                     )
 
-                    # Matched notes + accords on one line
                     notes_txt = ", ".join(matched_notes) if matched_notes else "None"
                     accords_txt = ", ".join(matched_pillars) if matched_pillars else "None"
                     st.write(f"**Matched notes:** {notes_txt}  |  **Matched accords:** {accords_txt}")
 
-                    # Pyramid
                     st.write(f"Top: {row.get('Top Notes','')}")
                     st.write(f"Heart: {row.get('Heart Notes','')}")
                     st.write(f"Base: {row.get('Base Notes','')}")
 
-                    # Missing notes (light grey italics)
                     if missing_notes:
                         miss_txt = ", ".join(missing_notes)
                         st.markdown(
@@ -802,6 +825,7 @@ with tab_add:
             new_perfume = st.text_input("Perfume")
             new_brand = st.text_input("Brand")
             new_gender = st.selectbox("Gender", ["", "F", "M", "U"])
+
         with c2:
             new_top = st.text_input("Top Notes (comma-separated)")
             new_heart = st.text_input("Heart Notes (comma-separated)")
