@@ -643,7 +643,7 @@ if st.session_state.view == "search":
             "Desired notes (comma-separated)",
             placeholder="e.g., jasmine, vanilla, patchouli"
         )
-
+        
         gender_choice = st.selectbox(
             "Gender preference (optional)",
             [
