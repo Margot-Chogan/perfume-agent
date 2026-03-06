@@ -430,6 +430,27 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 
 
 # =========================================================
+# DATA LOAD
+# =========================================================
+@st.cache_data
+def load_chogan_csv(path):
+    return pd.read_csv(path)
+
+
+try:
+    chogan = load_chogan_csv("chogan_catalog.csv")
+except Exception as e:
+    st.error(f"Could not load chogan_catalog.csv: {e}")
+    st.stop()
+
+external = pd.DataFrame(columns=EXPECTED_EXTERNAL_COLS)
+try:
+    external = load_external_from_sheets_cached()
+except Exception as e:
+    st.warning(f"Could not load external perfumes from Google Sheets: {e}")
+
+
+# =========================================================
 # UI HELPERS
 # =========================================================
 def score_badge(score: float):
@@ -514,7 +535,6 @@ footer { visibility:hidden; }
   padding-bottom: 2rem;
 }
 
-/* Hide accidental blank top input if any exists */
 .element-container:has(input[aria-label=""]) {
   display: none !important;
 }
@@ -623,7 +643,6 @@ footer { visibility:hidden; }
   margin-bottom:8px;
 }
 
-/* Black expanders */
 [data-testid="stExpander"] details{
   background:#000000 !important;
   border:1px solid rgba(255,255,255,0.08) !important;
@@ -784,7 +803,7 @@ elif st.session_state.view == "results":
         used_pyramid = False
         query_top, query_heart, query_base = set(), set(), set()
 
-        exact_hits = chogan.iloc[0:0]
+        exact_hits = chogan.iloc[0:0].copy()
         exact_hit_rows = []
 
         if mode == "By perfume name" and perfume_name.strip():
