@@ -614,7 +614,7 @@ footer { visibility:hidden; }
 
 .summary-line{
   margin-top:4px;
-  color:#cbd5e1;
+  color:#111827;
   font-size:0.96rem;
 }
 .summary-line b{
@@ -622,7 +622,7 @@ footer { visibility:hidden; }
 }
 
 .why-line{
-  color:#cbd5e1;
+  color:#111827;
   line-height:1.5;
 }
 
@@ -643,30 +643,36 @@ footer { visibility:hidden; }
   margin-bottom:8px;
 }
 
+/* Light expanders with black text */
 [data-testid="stExpander"] details{
-  background:#000000 !important;
-  border:1px solid rgba(255,255,255,0.08) !important;
+  background:#ffffff !important;
+  border:1px solid rgba(148,163,184,0.28) !important;
   border-radius:14px !important;
 }
+
 [data-testid="stExpander"] summary{
-  background:#000000 !important;
-  color:#ffffff !important;
+  background:#ffffff !important;
+  color:#111827 !important;
   border-radius:14px !important;
+  font-weight:600 !important;
 }
+
 [data-testid="stExpander"] summary:hover{
-  background:#000000 !important;
-  color:#ffffff !important;
+  background:#f8fafc !important;
+  color:#111827 !important;
 }
+
 [data-testid="stExpanderDetails"]{
-  background:#000000 !important;
-  color:#ffffff !important;
+  background:#ffffff !important;
+  color:#111827 !important;
   border-radius:0 0 14px 14px !important;
 }
+
 [data-testid="stExpanderDetails"] p,
 [data-testid="stExpanderDetails"] div,
 [data-testid="stExpanderDetails"] span,
 [data-testid="stExpanderDetails"] label{
-  color:#ffffff !important;
+  color:#111827 !important;
 }
 
 @media (max-width: 768px){
