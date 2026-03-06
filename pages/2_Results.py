@@ -9,6 +9,17 @@ from difflib import SequenceMatcher
 
 st.set_page_config(page_title="Recommendations", layout="centered")
 
+import streamlit.components.v1 as components
+
+components.html(
+    """
+    <script>
+        window.parent.scrollTo(0, 0);
+    </script>
+    """,
+    height=0,
+)
+
 # =========================================================
 # CONFIG
 # =========================================================
