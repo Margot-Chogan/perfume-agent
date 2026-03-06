@@ -39,12 +39,11 @@ if "view" not in st.session_state:
 if "last_query" not in st.session_state:
     st.session_state.last_query = {}
 
-# =========================================================
-# HELPERS
-# =========================================================
+
 def reset_search():
     st.session_state.last_query = {}
     st.session_state.view = "search"
+
 
 # =========================================================
 # GOOGLE SHEETS
@@ -59,17 +58,20 @@ def get_gs_client():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
 
+
 def get_external_worksheet():
     gc = get_gs_client()
     sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
     ws_name = st.secrets["external_sheet"]["worksheet_name"]
     return gc.open_by_key(sheet_id).worksheet(ws_name)
 
+
 def ensure_external_headers(ws):
     headers = ws.row_values(1)
     if headers != EXPECTED_EXTERNAL_COLS:
         ws.clear()
         ws.append_row(EXPECTED_EXTERNAL_COLS)
+
 
 @st.cache_data(ttl=300)
 def load_external_from_sheets_cached():
@@ -81,6 +83,7 @@ def load_external_from_sheets_cached():
         if col not in df.columns:
             df[col] = ""
     return df[EXPECTED_EXTERNAL_COLS]
+
 
 def upsert_external_to_sheets(row_dict):
     ws = get_external_worksheet()
@@ -107,6 +110,7 @@ def upsert_external_to_sheets(row_dict):
 
     load_external_from_sheets_cached.clear()
 
+
 # =========================================================
 # TEXT NORMALIZATION
 # =========================================================
@@ -114,11 +118,13 @@ def strip_accents(s: str) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     return "".join(c for c in s if not unicodedata.combining(c))
 
+
 def norm_text(s: str) -> str:
     s = strip_accents(s).lower()
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s)
     return s.strip()
+
 
 def name_similarity(a: str, b: str) -> float:
     a = norm_text(a)
@@ -128,6 +134,7 @@ def name_similarity(a: str, b: str) -> float:
     tb = set(b.split())
     jac = len(ta & tb) / len(ta | tb) if (ta or tb) else 0.0
     return (fuzz + jac) / 2.0
+
 
 # =========================================================
 # NOTE MATCHING
@@ -160,11 +167,13 @@ NOTE_SYNONYMS = {
     "black currant": "blackcurrant",
 }
 
+
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
         return []
     parts = re.split(r"[,/;]+", str(x))
     return [p.strip() for p in parts if p.strip()]
+
 
 def normalize_note(note: str) -> str:
     raw = strip_accents(str(note)).lower()
@@ -187,6 +196,7 @@ def normalize_note(note: str) -> str:
 
     return cleaned
 
+
 def normalize_notes_list(lst):
     out = []
     for x in lst:
@@ -195,12 +205,14 @@ def normalize_notes_list(lst):
             out.append(n)
     return out
 
+
 def notes_match(a: str, b: str) -> bool:
     a = normalize_note(a)
     b = normalize_note(b)
     if not a or not b:
         return False
     return a == b or a in b or b in a
+
 
 def set_intersection_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
     matched = set()
@@ -211,6 +223,7 @@ def set_intersection_smart(query_notes_set: set[str], perfume_notes_set: set[str
                 break
     return matched
 
+
 def set_missing_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
     missing = set()
     for q in query_notes_set:
@@ -218,12 +231,14 @@ def set_missing_smart(query_notes_set: set[str], perfume_notes_set: set[str]) ->
             missing.add(q)
     return missing
 
+
 def set_extra_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
     extra = set()
     for p in perfume_notes_set:
         if not any(notes_match(q, p) for q in query_notes_set):
             extra.add(p)
     return extra
+
 
 # =========================================================
 # PILLARS
@@ -263,6 +278,7 @@ ANCHOR_COMBOS = [
     ({"neroli", "orange blossom"}, 0.5),
 ]
 
+
 def detect_pillars(notes_set: set[str]) -> set[str]:
     found = set()
     for pillar, kws in PILLARS.items():
@@ -270,11 +286,13 @@ def detect_pillars(notes_set: set[str]) -> set[str]:
             found.add(pillar)
     return found
 
+
 def penalties(query_pillars: set[str], perfume_pillars: set[str]) -> float:
     pen = 0.0
     if "gourmand" in query_pillars and "gourmand" not in perfume_pillars:
         pen -= 1.0
     return pen
+
 
 # =========================================================
 # SCORING
@@ -286,6 +304,7 @@ def get_row_note_sets(row):
     all_notes = top | heart | base
     return top, heart, base, all_notes
 
+
 def fbeta(precision: float, recall: float, beta: float) -> float:
     if precision <= 0 and recall <= 0:
         return 0.0
@@ -294,6 +313,7 @@ def fbeta(precision: float, recall: float, beta: float) -> float:
     if denom <= 0:
         return 0.0
     return (1 + b2) * (precision * recall) / denom
+
 
 def score_notes_simple(query_notes: set[str], perfume_notes: set[str]):
     if not query_notes:
@@ -305,6 +325,7 @@ def score_notes_simple(query_notes: set[str], perfume_notes: set[str]):
     precision = len(matched) / max(len(perfume_notes), 1)
     note_score = fbeta(precision, recall, F_BETA)
     return note_score, matched, missing, extra
+
 
 def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart, perf_base):
     q_top = set(query_top)
@@ -364,6 +385,7 @@ def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart
 
     return max(min(note_score, 1.0), 0.0), matched_notes, missing, extra
 
+
 def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_heart=None, query_base=None):
     perf_top, perf_heart, perf_base, perf_all = get_row_note_sets(row)
 
@@ -406,6 +428,7 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 
     return score10, matched_notes, matched_pillars, missing_notes, extra_notes
 
+
 # =========================================================
 # UI HELPERS
 # =========================================================
@@ -417,6 +440,7 @@ def score_badge(score: float):
     if score >= 3.0:
         return ("Worth a try", "#fde68a", "#111827")
     return ("Low match", "#e5e7eb", "#111827")
+
 
 def score_scale_card():
     st.markdown(
@@ -433,6 +457,7 @@ def score_scale_card():
         unsafe_allow_html=True,
     )
 
+
 def compact_summary(matched_notes, matched_pillars, missing_notes):
     return (
         f"<div class='summary-line'>"
@@ -443,6 +468,7 @@ def compact_summary(matched_notes, matched_pillars, missing_notes):
         f"<b>Missing:</b> {len(missing_notes)}"
         f"</div>"
     )
+
 
 def why_this_match_text(score, matched_notes, matched_pillars, missing_notes):
     parts = []
@@ -466,6 +492,7 @@ def why_this_match_text(score, matched_notes, matched_pillars, missing_notes):
         parts.append("This shares some DNA, but it is more of a directional recommendation.")
 
     return " ".join(parts)
+
 
 # =========================================================
 # STYLES
@@ -619,7 +646,7 @@ footer { visibility:hidden; }
 [data-testid="stExpanderDetails"] p,
 [data-testid="stExpanderDetails"] div,
 [data-testid="stExpanderDetails"] span,
-[data-testid="stExpanderDetails"] label {
+[data-testid="stExpanderDetails"] label{
   color:#ffffff !important;
 }
 
@@ -801,10 +828,12 @@ elif st.session_state.view == "results":
                 st.markdown('<div class="exact-card">', unsafe_allow_html=True)
                 st.markdown(f"### ✅ Exact match — **{ref}**")
                 st.write(f"Inspiration: *{hit.get('Inspiration','')}*")
+
                 with st.expander("View notes pyramid", expanded=False):
                     st.write(f"Top: {hit.get('Top Notes','')}")
                     st.write(f"Heart: {hit.get('Heart Notes','')}")
                     st.write(f"Base: {hit.get('Base Notes','')}")
+
                 st.markdown("</div>", unsafe_allow_html=True)
 
         used_external = None
