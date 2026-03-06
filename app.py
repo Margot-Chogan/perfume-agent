@@ -39,18 +39,11 @@ if "view" not in st.session_state:
 if "last_query" not in st.session_state:
     st.session_state.last_query = {}
 
-def go_search():
-    st.session_state.view = "search"
-
-def go_results():
-    st.session_state.view = "results"
-
-def go_add():
-    st.session_state.view = "add"
 
 def reset_search():
     st.session_state.last_query = {}
     st.session_state.view = "search"
+
 
 # =========================================================
 # GOOGLE SHEETS
@@ -65,17 +58,20 @@ def get_gs_client():
     creds = Credentials.from_service_account_info(creds_info, scopes=scopes)
     return gspread.authorize(creds)
 
+
 def get_external_worksheet():
     gc = get_gs_client()
     sheet_id = st.secrets["external_sheet"]["spreadsheet_id"]
     ws_name = st.secrets["external_sheet"]["worksheet_name"]
     return gc.open_by_key(sheet_id).worksheet(ws_name)
 
+
 def ensure_external_headers(ws):
     headers = ws.row_values(1)
     if headers != EXPECTED_EXTERNAL_COLS:
         ws.clear()
         ws.append_row(EXPECTED_EXTERNAL_COLS)
+
 
 @st.cache_data(ttl=300)
 def load_external_from_sheets_cached():
@@ -87,6 +83,7 @@ def load_external_from_sheets_cached():
         if col not in df.columns:
             df[col] = ""
     return df[EXPECTED_EXTERNAL_COLS]
+
 
 def upsert_external_to_sheets(row_dict):
     ws = get_external_worksheet()
@@ -113,6 +110,7 @@ def upsert_external_to_sheets(row_dict):
 
     load_external_from_sheets_cached.clear()
 
+
 # =========================================================
 # TEXT NORMALIZATION
 # =========================================================
@@ -120,11 +118,13 @@ def strip_accents(s: str) -> str:
     s = unicodedata.normalize("NFKD", str(s))
     return "".join(c for c in s if not unicodedata.combining(c))
 
+
 def norm_text(s: str) -> str:
     s = strip_accents(s).lower()
     s = re.sub(r"[^a-z0-9\s]", " ", s)
     s = re.sub(r"\s+", " ", s)
     return s.strip()
+
 
 def name_similarity(a: str, b: str) -> float:
     a = norm_text(a)
@@ -134,6 +134,7 @@ def name_similarity(a: str, b: str) -> float:
     tb = set(b.split())
     jac = len(ta & tb) / len(ta | tb) if (ta or tb) else 0.0
     return (fuzz + jac) / 2.0
+
 
 # =========================================================
 # NOTE MATCHING
@@ -166,11 +167,13 @@ NOTE_SYNONYMS = {
     "black currant": "blackcurrant",
 }
 
+
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
         return []
     parts = re.split(r"[,/;]+", str(x))
     return [p.strip() for p in parts if p.strip()]
+
 
 def normalize_note(note: str) -> str:
     raw = strip_accents(str(note)).lower()
@@ -193,6 +196,7 @@ def normalize_note(note: str) -> str:
 
     return cleaned
 
+
 def normalize_notes_list(lst):
     out = []
     for x in lst:
@@ -201,12 +205,14 @@ def normalize_notes_list(lst):
             out.append(n)
     return out
 
+
 def notes_match(a: str, b: str) -> bool:
     a = normalize_note(a)
     b = normalize_note(b)
     if not a or not b:
         return False
     return a == b or a in b or b in a
+
 
 def set_intersection_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
     matched = set()
@@ -217,6 +223,7 @@ def set_intersection_smart(query_notes_set: set[str], perfume_notes_set: set[str
                 break
     return matched
 
+
 def set_missing_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
     missing = set()
     for q in query_notes_set:
@@ -224,12 +231,14 @@ def set_missing_smart(query_notes_set: set[str], perfume_notes_set: set[str]) ->
             missing.add(q)
     return missing
 
+
 def set_extra_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
     extra = set()
     for p in perfume_notes_set:
         if not any(notes_match(q, p) for q in query_notes_set):
             extra.add(p)
     return extra
+
 
 # =========================================================
 # PILLARS
@@ -269,6 +278,7 @@ ANCHOR_COMBOS = [
     ({"neroli", "orange blossom"}, 0.5),
 ]
 
+
 def detect_pillars(notes_set: set[str]) -> set[str]:
     found = set()
     for pillar, kws in PILLARS.items():
@@ -276,11 +286,13 @@ def detect_pillars(notes_set: set[str]) -> set[str]:
             found.add(pillar)
     return found
 
+
 def penalties(query_pillars: set[str], perfume_pillars: set[str]) -> float:
     pen = 0.0
     if "gourmand" in query_pillars and "gourmand" not in perfume_pillars:
         pen -= 1.0
     return pen
+
 
 # =========================================================
 # SCORING
@@ -292,6 +304,7 @@ def get_row_note_sets(row):
     all_notes = top | heart | base
     return top, heart, base, all_notes
 
+
 def fbeta(precision: float, recall: float, beta: float) -> float:
     if precision <= 0 and recall <= 0:
         return 0.0
@@ -300,6 +313,7 @@ def fbeta(precision: float, recall: float, beta: float) -> float:
     if denom <= 0:
         return 0.0
     return (1 + b2) * (precision * recall) / denom
+
 
 def score_notes_simple(query_notes: set[str], perfume_notes: set[str]):
     if not query_notes:
@@ -311,6 +325,7 @@ def score_notes_simple(query_notes: set[str], perfume_notes: set[str]):
     precision = len(matched) / max(len(perfume_notes), 1)
     note_score = fbeta(precision, recall, F_BETA)
     return note_score, matched, missing, extra
+
 
 def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart, perf_base):
     q_top = set(query_top)
@@ -370,6 +385,7 @@ def score_notes_pyramid(query_top, query_heart, query_base, perf_top, perf_heart
 
     return max(min(note_score, 1.0), 0.0), matched_notes, missing, extra
 
+
 def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_heart=None, query_base=None):
     perf_top, perf_heart, perf_base, perf_all = get_row_note_sets(row)
 
@@ -412,12 +428,14 @@ def score_perfume(query_notes, row, used_pyramid=False, query_top=None, query_he
 
     return score10, matched_notes, matched_pillars, missing_notes, extra_notes
 
+
 # =========================================================
 # DATA LOAD
 # =========================================================
 @st.cache_data
 def load_chogan_csv(path):
     return pd.read_csv(path)
+
 
 try:
     chogan = load_chogan_csv("chogan_catalog.csv")
@@ -431,17 +449,45 @@ try:
 except Exception as e:
     st.warning(f"Could not load external perfumes from Google Sheets: {e}")
 
+
 # =========================================================
 # STYLES
 # =========================================================
 st.markdown(
     """
 <style>
+/* Remove Streamlit chrome so the app feels like a real product */
+.stAppHeader {
+  display: none;
+}
+[data-testid="stHeader"] {
+  display: none;
+}
+[data-testid="stToolbar"] {
+  visibility: hidden;
+  height: 0%;
+  position: fixed;
+}
+[data-testid="stDecoration"] {
+  display: none;
+}
+[data-testid="stStatusWidget"] {
+  display: none;
+}
+#MainMenu {
+  visibility: hidden;
+}
+footer {
+  visibility: hidden;
+}
+
+/* Pull the whole app down so top buttons are never blocked */
 .block-container{
   max-width: 860px;
-  padding-top: 1.2rem;
+  padding-top: 6rem;
   padding-bottom: 2rem;
 }
+
 .search-card, .add-card{
   border:1px solid rgba(148,163,184,0.35);
   border-radius:16px;
@@ -455,9 +501,22 @@ st.markdown(
   background: rgba(255,255,255,0.04);
   margin-bottom: 12px;
 }
-.score-scale-title{font-weight:700;margin-bottom:8px;}
-.score-scale-row{display:flex;gap:8px;flex-wrap:wrap;}
-.pill{padding:7px 12px;border-radius:999px;font-weight:800;font-size:0.92rem;display:inline-block;}
+.score-scale-title{
+  font-weight:700;
+  margin-bottom:8px;
+}
+.score-scale-row{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.pill{
+  padding:7px 12px;
+  border-radius:999px;
+  font-weight:800;
+  font-size:0.92rem;
+  display:inline-block;
+}
 .pill-green{background:#16a34a;color:#fff}
 .pill-blue{background:#60a5fa;color:#fff}
 .pill-yellow{background:#fde68a;color:#111827}
@@ -472,13 +531,42 @@ st.markdown(
   gap:12px;
   margin:8px 0 6px 0;
 }
-.score-main{font-weight:900;font-size:1.2rem;line-height:1.15;}
-.score-sub{font-size:0.82rem;color:#94a3b8;margin-top:4px;}
-.score-badge{padding:8px 14px;border-radius:999px;font-weight:800;font-size:0.95rem;white-space:nowrap;}
-.meta-line{margin-top:6px;margin-bottom:2px;}
-.missing-line{color:#9ca3af;font-style:italic;margin-top:6px;}
-.extra-line{color:#9ca3af;font-style:italic;margin-top:2px;}
+.score-main{
+  font-weight:900;
+  font-size:1.2rem;
+  line-height:1.15;
+}
+.score-sub{
+  font-size:0.82rem;
+  color:#94a3b8;
+  margin-top:4px;
+}
+.score-badge{
+  padding:8px 14px;
+  border-radius:999px;
+  font-weight:800;
+  font-size:0.95rem;
+  white-space:nowrap;
+}
+.meta-line{
+  margin-top:6px;
+  margin-bottom:2px;
+}
+.missing-line{
+  color:#9ca3af;
+  font-style:italic;
+  margin-top:6px;
+}
+.extra-line{
+  color:#9ca3af;
+  font-style:italic;
+  margin-top:2px;
+}
 @media (max-width: 768px){
+  .block-container{
+    padding-top: 5rem;
+    padding-bottom: 1.5rem;
+  }
   .score-card{
     flex-direction:column;
     align-items:flex-start;
@@ -486,9 +574,17 @@ st.markdown(
     padding:14px;
     gap:10px;
   }
-  .score-main{font-size:1.45rem;}
-  .score-sub{font-size:0.86rem;}
-  .score-badge{align-self:flex-start;font-size:1rem;padding:9px 14px;}
+  .score-main{
+    font-size:1.45rem;
+  }
+  .score-sub{
+    font-size:0.86rem;
+  }
+  .score-badge{
+    align-self:flex-start;
+    font-size:1rem;
+    padding:9px 14px;
+  }
 }
 </style>
     """,
@@ -507,6 +603,7 @@ def score_badge(score: float):
         return ("Worth a try", "#fde68a", "#111827")
     return ("Low match", "#e5e7eb", "#111827")
 
+
 def score_scale_card():
     st.markdown(
         """
@@ -521,6 +618,7 @@ def score_scale_card():
         """,
         unsafe_allow_html=True,
     )
+
 
 # =========================================================
 # SEARCH VIEW
@@ -585,6 +683,7 @@ if st.session_state.view == "search":
     if st.button("Add a new perfume to the database", use_container_width=True):
         st.session_state.view = "add"
         st.rerun()
+
 
 # =========================================================
 # RESULTS VIEW
@@ -858,6 +957,7 @@ elif st.session_state.view == "results":
                 "Sorry, we don't have a good match for the notes in the perfume you are looking for. "
                 "Would you like to try something else?"
             )
+
 
 # =========================================================
 # ADD VIEW
