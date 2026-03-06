@@ -2,16 +2,10 @@ import streamlit as st
 
 st.set_page_config(page_title="Find your Chogan Perfume", layout="centered")
 
-# =========================================================
-# HELPERS
-# =========================================================
 def reset_search():
     st.query_params.clear()
     st.rerun()
 
-# =========================================================
-# STYLES
-# =========================================================
 st.markdown(
     """
     <style>
@@ -31,9 +25,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# =========================================================
-# PAGE
-# =========================================================
 st.title("Find your Chogan Perfume")
 st.subheader("Search")
 
@@ -88,4 +79,6 @@ with st.container():
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-st.info("Use the tab/page 'Add a new perfume to the database' to add external perfumes.")
+st.markdown("###")
+if st.button("Add a new perfume to the database", use_container_width=True):
+    st.switch_page("pages/3_Add_to_database.py")
