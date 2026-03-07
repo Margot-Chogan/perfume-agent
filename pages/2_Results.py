@@ -740,7 +740,8 @@ if "Gender" in filtered.columns:
 # RECOMMENDATIONS
 # =========================================================
 if not query_notes and not used_pyramid:
-    st.warning("Add some notes, or search a perfume name that exists in your external database.")
+    st.warning("This perfume isn't yet referenced in our database. Speak to Margot to add it in and try again."
+               "In the meantime, try adding some notes, or search a perfume name that exists in the external perfumes database.")
 else:
     exact_refs = set()
     if len(exact_hits) > 0:
@@ -847,8 +848,6 @@ else:
 
     if shown == 0:
         st.warning(
-            "Sorry, we don't seem to have a good match for you based on the perfume you are looking for. "
-            "It is most likely because this fragrance has not yet been added to the database. Speak to Margot to add it in and try again."
-            ""
-            "In the meantime, would you like to try something else?"
+            "Sorry, we don't seem to have a good match for the notes in the perfume you are looking for. "
+            "Would you like to try something else?"
         )
