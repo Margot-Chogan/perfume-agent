@@ -643,7 +643,6 @@ footer { visibility:hidden; }
   margin-bottom:8px;
 }
 
-/* Light expanders with black text */
 [data-testid="stExpander"] details{
   background:#ffffff !important;
   border:1px solid rgba(148,163,184,0.28) !important;
@@ -675,6 +674,10 @@ footer { visibility:hidden; }
   color:#111827 !important;
 }
 
+.results-title{
+  margin: 0 0 0.6rem 0;
+}
+
 @media (max-width: 768px){
   .block-container{
     padding-top: 4.75rem;
@@ -693,6 +696,11 @@ footer { visibility:hidden; }
     align-self:flex-start;
     font-size:0.98rem;
     padding:9px 14px;
+  }
+  .results-title{
+    font-size:2.05rem !important;
+    line-height:1.1 !important;
+    letter-spacing:-0.02em !important;
   }
 }
 </style>
@@ -799,7 +807,7 @@ elif st.session_state.view == "results":
             st.session_state.view = "add"
             st.rerun()
 
-    st.title("My Recommendations")
+    st.markdown("<h1 class='results-title'>My Recommendations</h1>", unsafe_allow_html=True)
     score_scale_card()
 
     with st.spinner("Finding your best matches..."):
