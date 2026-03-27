@@ -167,6 +167,11 @@ NOTE_SYNONYMS = {
     "black currant": "blackcurrant",
 }
 
+NOTE_EQUIVALENTS = {
+    "orange blossom": {"neroli"},
+    "neroli": {"orange blossom"},
+}
+
 
 def split_notes(x):
     if pd.isna(x) or str(x).strip() == "":
@@ -209,9 +214,21 @@ def normalize_notes_list(lst):
 def notes_match(a: str, b: str) -> bool:
     a = normalize_note(a)
     b = normalize_note(b)
+
     if not a or not b:
         return False
-    return a == b or a in b or b in a
+
+    # Exact canonical match only
+    if a == b:
+        return True
+
+    # Explicit equivalence rules only
+    if b in NOTE_EQUIVALENTS.get(a, set()):
+        return True
+    if a in NOTE_EQUIVALENTS.get(b, set()):
+        return True
+
+    return False
 
 
 def set_intersection_smart(query_notes_set: set[str], perfume_notes_set: set[str]) -> set[str]:
